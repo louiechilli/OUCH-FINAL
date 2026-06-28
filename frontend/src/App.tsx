@@ -6,6 +6,8 @@ import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { useIdleLock } from "./auth/useIdleLock";
 import { useLockLandscape } from "./hooks/useLockLandscape";
 import { usePushNotifications } from "./hooks/usePushNotifications";
+import { ConnectivityProvider } from "./connectivity/ConnectivityContext";
+import OfflineBanner from "./connectivity/OfflineBanner";
 
 function AuthGate() {
   const { phase, lock } = useAuth();
@@ -25,9 +27,12 @@ function App() {
   useLockLandscape();
 
   return (
-    <AuthProvider>
-      <AuthGate />
-    </AuthProvider>
+    <ConnectivityProvider>
+      <OfflineBanner />
+      <AuthProvider>
+        <AuthGate />
+      </AuthProvider>
+    </ConnectivityProvider>
   );
 }
 
