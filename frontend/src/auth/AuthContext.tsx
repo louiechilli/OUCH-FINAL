@@ -25,6 +25,7 @@ interface AuthContextValue {
   unlockWithPin: (pin: string) => Promise<void>;
   lock: () => void;
   logout: () => void;
+  fetchWithAuth: (path: string, init?: RequestInit) => Promise<Response>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -149,9 +150,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const fetchWithAuth = useCallback(async (path: string, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    if (accessTokenRef.current) {
+      headers.set("Authorization", `Bearer ${accessTokenRef.current}`);
+    }
+    if (init?.body && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+    return fetch(`${apiUrl}${path}`, { ...init, headers });
+  }, []);
+
   return (
     <AuthContext.Provider
-      value={{ phase, user, error, login, setupPin, unlockWithPin, lock, logout }}
+      value={{ phase, user, error, login, setupPin, unlockWithPin, lock, logout, fetchWithAuth }}
     >
       {children}
     </AuthContext.Provider>
@@ -162,4 +174,9 @@ export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
+}
+
+export function useIsAdmin() {
+  const { user } = useAuth();
+  return user?.isAdmin === true;
 }

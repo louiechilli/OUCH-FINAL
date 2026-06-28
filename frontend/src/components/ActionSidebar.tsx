@@ -6,24 +6,29 @@ interface Action {
   icon: string;
   badge?: number;
   accent: "pink" | "blue" | "purple" | "orange";
+  adminOnly?: boolean;
 }
 
-const actions: Action[] = [
+const baseActions: Action[] = [
   { id: "new-sale", label: "New Sale", icon: "+", accent: "pink" },
   { id: "bookings", label: "Bookings", icon: "BK", accent: "blue", badge: 4 },
   { id: "clients", label: "Clients", icon: "CL", accent: "purple" },
   { id: "stock", label: "Stock", icon: "ST", accent: "orange" },
   { id: "reports", label: "Reports", icon: "RP", accent: "blue" },
   { id: "settings", label: "Settings", icon: "•••", accent: "purple" },
+  { id: "permissions", label: "Permissions", icon: "PM", accent: "orange", adminOnly: true },
 ];
 
 interface ActionSidebarProps {
   staffName: string;
   onAction?: (id: string) => void;
   push: ReturnType<typeof usePushNotifications>;
+  isAdmin?: boolean;
 }
 
-function ActionSidebar({ staffName, onAction, push }: ActionSidebarProps) {
+function ActionSidebar({ staffName, onAction, push, isAdmin = false }: ActionSidebarProps) {
+  const actions = baseActions.filter((action) => !action.adminOnly || isAdmin);
+
   return (
     <div className="sidebar">
       <button className="sidebar__menu" aria-label="Menu">

@@ -7,6 +7,7 @@ import { calendarRouter } from "./calendar/router";
 import { bookingsRouter } from "./bookings/router";
 import { blocksRouter } from "./blocks/router";
 import { renewExpiringWatches, startWatchesForAllActiveArtists } from "./calendar/watch";
+import { adminRouter } from "./admin/router";
 
 const app = express();
 app.use(cors());
@@ -16,6 +17,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/calendar", calendarRouter);
 app.use("/api/bookings", bookingsRouter);
 app.use("/api/blocks", blocksRouter);
+app.use("/api/admin", adminRouter);
 
 app.get("/api/health", async (_req, res) => {
   try {
