@@ -1,0 +1,60 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: epos
+      POSTGRES_PASSWORD: epos
+      POSTGRES_DB: epos
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U epos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      PORT: 4000
+      DATABASE_URL: postgresql://epos:epos@db:5432/epos
+      VAPID_PUBLIC_KEY: BEOGN4abGDFufHogRWa3SL9A2ZF552IK7DsPeFdIMlQsRn4OFD3ByaWtKtU8KzYvnlB60jyUPDhCqdsZ-GWiwYs
+      VAPID_PRIVATE_KEY: u6CanvRiDqHsz6bQyIFN1CWrXMvNZ8Gd3R5x4R_WJLs
+      JWT_SECRET: 9f3c2e7a6b1d4f0c8e5a2b7d9c1f4e6a8b3d5f7c9e1a3b5d7f9c2e4a6b8d0f2c
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
+
+volumes:
+  db_data:
