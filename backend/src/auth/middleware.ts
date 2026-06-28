@@ -25,3 +25,11 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     res.status(401).json({ error: "Invalid or expired access token" });
   }
 }
+
+export function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (!req.user?.isAdmin) {
+    res.status(403).json({ error: "Admin access required" });
+    return;
+  }
+  next();
+}

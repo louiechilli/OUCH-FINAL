@@ -173,6 +173,42 @@ export async function runMigrations() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_booking_events_booking_id ON booking_events (booking_id);
+
+    -- Google Calendar is the source of truth. Any event on an artist's
+    -- calendar that we didn't create ourselves (no matching booking) is
+    -- treated as a block-out — time the artist is unavailable for EPOS
+    -- bookings, managed directly in their calendar (holiday, personal
+    -- appointment, etc.) rather than through this app.
+    CREATE TABLE IF NOT EXISTS calendar_blocks (
+      id SERIAL PRIMARY KEY,
+      artist_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+      starts_at TIMESTAMPTZ NOT NULL,
+      ends_at TIMESTAMPTZ NOT NULL,
+      reason TEXT,
+      source TEXT NOT NULL DEFAULT 'admin' CHECK (source IN ('admin', 'google_calendar')),
+      google_calendar_event_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_calendar_blocks_artist_starts_at ON calendar_blocks (artist_id, starts_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_blocks_event_id ON calendar_blocks (google_calendar_event_id)
+      WHERE google_calendar_event_id IS NOT NULL;
+
+    -- One push-notification "watch" channel per artist calendar, plus the
+    -- incremental sync token Google issues so we only ever pull what
+    -- changed since last time instead of re-listing the whole calendar.
+    CREATE TABLE IF NOT EXISTS calendar_watch_channels (
+      id SERIAL PRIMARY KEY,
+      artist_id INTEGER UNIQUE NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+      channel_id TEXT UNIQUE NOT NULL,
+      resource_id TEXT,
+      channel_token TEXT NOT NULL,
+      sync_token TEXT,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 
   await seedAdminUser();
