@@ -173,11 +173,43 @@ export async function runMigrations() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_booking_events_booking_id ON booking_events (booking_id);
+
+    CREATE TABLE IF NOT EXISTS permission_groups (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      description TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS permissions (
+      id SERIAL PRIMARY KEY,
+      group_id INTEGER NOT NULL REFERENCES permission_groups(id) ON DELETE CASCADE,
+      key TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_permissions_group_id ON permissions (group_id);
+
+    CREATE TABLE IF NOT EXISTS user_permissions (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      permission_id INTEGER NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+      granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      granted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      PRIMARY KEY (user_id, permission_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_permissions_user_id ON user_permissions (user_id);
   `);
 
   await seedAdminUser();
   await backfillArtistsForUsers();
   await seedCategories();
+  await seedPermissionSchema();
 }
 
 async function seedAdminUser() {
@@ -221,4 +253,99 @@ async function seedCategories() {
     );
   }
   console.log(`Seeded ${DEFAULT_CATEGORIES.length} default categories.`);
+}
+
+const DEFAULT_PERMISSION_GROUPS: Array<{
+  name: string;
+  slug: string;
+  description: string;
+  sortOrder: number;
+  permissions: Array<{ key: string; name: string; description: string; sortOrder: number }>;
+}> = [
+  {
+    name: "Sales",
+    slug: "sales",
+    description: "Point-of-sale and checkout",
+    sortOrder: 0,
+    permissions: [
+      { key: "sales.view", name: "View sales", description: "View sales history and open tickets", sortOrder: 0 },
+      { key: "sales.create", name: "Create sale", description: "Start new sales and add items", sortOrder: 1 },
+      { key: "sales.refund", name: "Process refunds", description: "Issue refunds on completed sales", sortOrder: 2 },
+    ],
+  },
+  {
+    name: "Bookings",
+    slug: "bookings",
+    description: "Appointments and scheduling",
+    sortOrder: 1,
+    permissions: [
+      { key: "bookings.view", name: "View bookings", description: "View the schedule and booking details", sortOrder: 0 },
+      { key: "bookings.create", name: "Create bookings", description: "Add new appointments", sortOrder: 1 },
+      { key: "bookings.edit", name: "Edit bookings", description: "Reschedule or update booking details", sortOrder: 2 },
+      { key: "bookings.cancel", name: "Cancel bookings", description: "Cancel or mark no-shows", sortOrder: 3 },
+    ],
+  },
+  {
+    name: "Clients",
+    slug: "clients",
+    description: "Customer records",
+    sortOrder: 2,
+    permissions: [
+      { key: "clients.view", name: "View clients", description: "Browse client profiles", sortOrder: 0 },
+      { key: "clients.create", name: "Create clients", description: "Add new client records", sortOrder: 1 },
+      { key: "clients.edit", name: "Edit clients", description: "Update client details and notes", sortOrder: 2 },
+    ],
+  },
+  {
+    name: "Stock",
+    slug: "stock",
+    description: "Inventory management",
+    sortOrder: 3,
+    permissions: [
+      { key: "stock.view", name: "View stock", description: "View inventory levels", sortOrder: 0 },
+      { key: "stock.edit", name: "Manage stock", description: "Adjust stock counts and reorder", sortOrder: 1 },
+    ],
+  },
+  {
+    name: "Reports",
+    slug: "reports",
+    description: "Analytics and exports",
+    sortOrder: 4,
+    permissions: [
+      { key: "reports.view", name: "View reports", description: "Access dashboards and summaries", sortOrder: 0 },
+      { key: "reports.export", name: "Export reports", description: "Download CSV or PDF exports", sortOrder: 1 },
+    ],
+  },
+  {
+    name: "Settings",
+    slug: "settings",
+    description: "Studio configuration",
+    sortOrder: 5,
+    permissions: [
+      { key: "settings.view", name: "View settings", description: "View studio settings", sortOrder: 0 },
+      { key: "settings.edit", name: "Edit settings", description: "Change studio configuration", sortOrder: 1 },
+    ],
+  },
+];
+
+async function seedPermissionSchema() {
+  const { rows } = await pool.query("SELECT COUNT(*) FROM permission_groups");
+  if (Number(rows[0].count) > 0) return;
+
+  for (const group of DEFAULT_PERMISSION_GROUPS) {
+    const { rows: groupRows } = await pool.query<{ id: number }>(
+      "INSERT INTO permission_groups (name, slug, description, sort_order) VALUES ($1, $2, $3, $4) RETURNING id",
+      [group.name, group.slug, group.description, group.sortOrder]
+    );
+    const groupId = groupRows[0].id;
+
+    for (const perm of group.permissions) {
+      await pool.query(
+        "INSERT INTO permissions (group_id, key, name, description, sort_order) VALUES ($1, $2, $3, $4, $5)",
+        [groupId, perm.key, perm.name, perm.description, perm.sortOrder]
+      );
+    }
+  }
+
+  console.log(`Seeded ${DEFAULT_PERMISSION_GROUPS.length} permission groups.`);
 }
