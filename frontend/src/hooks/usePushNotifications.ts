@@ -7,45 +7,54 @@ function urlBase64ToUint8Array(base64String: string) {
   return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
 }
 
-// Empty by default: nginx proxies /api/* to the backend on the same origin,
-// so an absolute URL here would break as soon as this is accessed from
-// anything other than the machine running docker compose (e.g. the iPad).
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
 
 export type PushStatus = "unsupported" | "idle" | "subscribing" | "subscribed" | "denied" | "error";
 
-async function postSubscription(subscription: PushSubscription) {
-  await fetch(`${apiUrl}/api/push/subscribe`, {
+type FetchWithAuth = (path: string, init?: RequestInit) => Promise<Response>;
+
+async function postSubscription(
+  fetchWithAuth: FetchWithAuth,
+  subscription: PushSubscription
+) {
+  const res = await fetchWithAuth("/api/push/subscribe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(subscription.toJSON()),
   });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error ?? "Could not register device for notifications");
+  }
 }
 
-export function usePushNotifications() {
+export function usePushNotifications(
+  fetchWithAuth: FetchWithAuth | null,
+  enabled: boolean
+) {
   const supported = "serviceWorker" in navigator && "PushManager" in window;
   const [status, setStatus] = useState<PushStatus>(supported ? "idle" : "unsupported");
 
-  // If permission was already granted in a previous visit, re-sync silently —
-  // this doesn't need a user gesture since no prompt will be shown.
+  const syncExistingSubscription = useCallback(async () => {
+    if (!supported || !fetchWithAuth || !enabled) return;
+    if (Notification.permission !== "granted") return;
+
+    const registration = await navigator.serviceWorker.ready;
+    const existing = await registration.pushManager.getSubscription();
+    if (!existing) return;
+
+    await postSubscription(fetchWithAuth, existing);
+    setStatus("subscribed");
+  }, [supported, fetchWithAuth, enabled]);
+
   useEffect(() => {
-    if (!supported || Notification.permission !== "granted") return;
+    if (!supported || !fetchWithAuth || !enabled) return;
 
-    navigator.serviceWorker.ready
-      .then((registration) => registration.pushManager.getSubscription())
-      .then((existing) => {
-        if (existing) {
-          setStatus("subscribed");
-          return postSubscription(existing);
-        }
-      })
-      .catch(() => setStatus("error"));
-  }, [supported]);
+    void syncExistingSubscription().catch(() => setStatus("error"));
+  }, [supported, fetchWithAuth, enabled, syncExistingSubscription]);
 
-  // Must be called from a direct user gesture (e.g. an onClick handler) —
-  // iOS Safari silently ignores Notification.requestPermission() otherwise.
   const subscribe = useCallback(async () => {
-    if (!supported) return;
+    if (!supported || !fetchWithAuth || !enabled) return;
     setStatus("subscribing");
 
     try {
@@ -58,14 +67,12 @@ export function usePushNotifications() {
       const registration = await navigator.serviceWorker.ready;
       const existing = await registration.pushManager.getSubscription();
       if (existing) {
-        await postSubscription(existing);
+        await postSubscription(fetchWithAuth, existing);
         setStatus("subscribed");
         return;
       }
 
-      const { publicKey } = await fetch(`${apiUrl}/api/push/vapid-public-key`).then((res) =>
-        res.json()
-      );
+      const { publicKey } = await fetch(`${apiUrl}/api/push/vapid-public-key`).then((res) => res.json());
       if (!publicKey) {
         setStatus("error");
         return;
@@ -76,12 +83,12 @@ export function usePushNotifications() {
         applicationServerKey: urlBase64ToUint8Array(publicKey),
       });
 
-      await postSubscription(subscription);
+      await postSubscription(fetchWithAuth, subscription);
       setStatus("subscribed");
     } catch {
       setStatus("error");
     }
-  }, [supported]);
+  }, [supported, fetchWithAuth, enabled]);
 
   return { status, subscribe };
 }

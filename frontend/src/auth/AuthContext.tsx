@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { recordActivity, shouldRequirePin } from "./activity";
 import { useConnectivity } from "../connectivity/ConnectivityContext";
 
 // Same-origin by default — nginx proxies /api/* to the backend regardless of
@@ -77,9 +78,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const data = await res.json();
         accessTokenRef.current = data.accessToken;
         setUser(data.user);
-        // Cold start always re-asks for the PIN, like a banking app — the
-        // long-lived refresh token just means you skip email/password.
-        setPhase(data.user.pinRequired ? "pin-setup" : "locked");
+        if (data.user.pinRequired) {
+          setPhase("pin-setup");
+        } else {
+          setPhase(shouldRequirePin() ? "locked" : "unlocked");
+        }
       })
       .catch(() => {
         localStorage.removeItem(REFRESH_TOKEN_KEY);
@@ -103,7 +106,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
     accessTokenRef.current = data.accessToken;
     setUser(data.user);
-    setPhase(data.user.pinRequired ? "pin-setup" : "unlocked");
+    if (data.user.pinRequired) {
+      setPhase("pin-setup");
+    } else {
+      recordActivity();
+      setPhase("unlocked");
+    }
   }, [trackedFetch]);
 
   const setupPin = useCallback(async (pin: string, confirmPin: string) => {
@@ -122,6 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(message);
     }
     setUser((current) => (current ? { ...current, pinRequired: false } : current));
+    recordActivity();
     setPhase("unlocked");
   }, [trackedFetch]);
 
@@ -146,6 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await res.json();
     accessTokenRef.current = data.accessToken;
     setUser(data.user);
+    recordActivity();
     setPhase("unlocked");
   }, [trackedFetch]);
 

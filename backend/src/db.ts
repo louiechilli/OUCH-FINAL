@@ -72,7 +72,8 @@ export async function runMigrations() {
       description TEXT,
       min_hours NUMERIC(4, 2) NOT NULL DEFAULT 1,
       max_hours NUMERIC(4, 2),
-      default_hourly_rate NUMERIC(10, 2) NOT NULL,
+      default_hourly_rate NUMERIC(10, 2),
+      use_artist_default_rate BOOLEAN NOT NULL DEFAULT FALSE,
       deposit_amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -116,8 +117,8 @@ export async function runMigrations() {
       artist_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE RESTRICT,
       client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE RESTRICT,
       service_id INTEGER NOT NULL REFERENCES services(id) ON DELETE RESTRICT,
-      status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'confirmed', 'completed', 'cancelled', 'no_show', 'rescheduled')),
+      status TEXT NOT NULL DEFAULT 'booked'
+        CHECK (status IN ('booked', 'done', 'cancelled')),
       source TEXT NOT NULL DEFAULT 'admin'
         CHECK (source IN ('admin', 'website', 'phone', 'instagram', 'walk_in', 'google_calendar')),
       starts_at TIMESTAMPTZ NOT NULL,
@@ -240,12 +241,207 @@ export async function runMigrations() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_user_permissions_user_id ON user_permissions (user_id);
+
+    ALTER TABLE artists ADD COLUMN IF NOT EXISTS social_links JSONB NOT NULL DEFAULT '{}';
+
+    -- A consent form is a reusable questionnaire (medical history, disclaimer
+    -- text, signature) that a service can require before the appointment is
+    -- valid. "fields" is an ordered JSON array of { key, label, type,
+    -- required } so new templates don't need a schema change to add.
+    CREATE TABLE IF NOT EXISTS consent_form_templates (
+      id SERIAL PRIMARY KEY,
+      key TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      fields JSONB NOT NULL DEFAULT '[]',
+      disclaimer_text TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    ALTER TABLE services ADD COLUMN IF NOT EXISTS requires_consent_form_id INTEGER
+      REFERENCES consent_form_templates(id) ON DELETE SET NULL;
+
+    -- One signed submission per booking/template. Client and artist
+    -- signatures are captured as PNG data URLs straight off a touch canvas
+    -- — same "store the string, no separate file storage" approach already
+    -- used for artists.profile_image_url.
+    CREATE TABLE IF NOT EXISTS consent_submissions (
+      id SERIAL PRIMARY KEY,
+      booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+      template_id INTEGER NOT NULL REFERENCES consent_form_templates(id) ON DELETE RESTRICT,
+      answers JSONB NOT NULL DEFAULT '{}',
+      client_signature TEXT NOT NULL,
+      artist_signature TEXT,
+      signed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_consent_submissions_booking_id ON consent_submissions (booking_id);
+
+    -- Per-booking message thread. "sender_role" is forward-looking: today
+    -- every account is staff/artist, but a future client-facing channel can
+    -- post as 'client' into the same thread without a schema change.
+    -- media_url is a data URL, same storage approach as signatures above.
+    CREATE TABLE IF NOT EXISTS booking_messages (
+      id SERIAL PRIMARY KEY,
+      booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+      sender_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      sender_role TEXT NOT NULL DEFAULT 'artist' CHECK (sender_role IN ('artist', 'client')),
+      body TEXT,
+      media_url TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CHECK (body IS NOT NULL OR media_url IS NOT NULL)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_booking_messages_booking_id ON booking_messages (booking_id);
+
+    -- Universal audit trail. entity_type/event_type are free text, not enums
+    -- — the whole point is to log anything against any model without a
+    -- migration every time a new event shows up (a new notification
+    -- channel, a new admin action, etc). Query by entity (everything that
+    -- happened to booking #42), by actor (everything Sarah did), or by
+    -- event_type (every cancellation ever) — idx covers all three.
+    CREATE TABLE IF NOT EXISTS activity_log (
+      id SERIAL PRIMARY KEY,
+      entity_type TEXT NOT NULL,
+      entity_id INTEGER,
+      event_type TEXT NOT NULL,
+      actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      actor_label TEXT,
+      description TEXT NOT NULL,
+      changes JSONB,
+      metadata JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_activity_log_entity ON activity_log (entity_type, entity_id);
+    CREATE INDEX IF NOT EXISTS idx_activity_log_event_type ON activity_log (event_type);
+    CREATE INDEX IF NOT EXISTS idx_activity_log_actor ON activity_log (actor_user_id);
+    CREATE INDEX IF NOT EXISTS idx_activity_log_created_at ON activity_log (created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS payment_terminals (
+      id SERIAL PRIMARY KEY,
+      provider TEXT NOT NULL DEFAULT 'sumup',
+      external_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      device_model TEXT,
+      device_identifier TEXT,
+      is_default BOOLEAN NOT NULL DEFAULT false,
+      paired_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (provider, external_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS sms_messages (
+      id SERIAL PRIMARY KEY,
+      client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+      phone_numbers TEXT[] NOT NULL,
+      body TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued'
+        CHECK (status IN ('queued', 'sending', 'sent', 'failed')),
+      provider TEXT NOT NULL DEFAULT 'smsgate',
+      error_message TEXT,
+      job_id TEXT,
+      sent_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sms_messages_status ON sms_messages (status);
+    CREATE INDEX IF NOT EXISTS idx_sms_messages_created_at ON sms_messages (created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS notifications (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      link TEXT,
+      metadata JSONB,
+      read_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications (user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications (user_id)
+      WHERE read_at IS NULL;
+
+    CREATE TABLE IF NOT EXISTS booking_portal_tokens (
+      id SERIAL PRIMARY KEY,
+      booking_id INTEGER NOT NULL UNIQUE REFERENCES bookings(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_accessed_at TIMESTAMPTZ
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_booking_portal_tokens_hash ON booking_portal_tokens (token_hash);
+
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      user_agent TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_used_at TIMESTAMPTZ
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions (user_id);
+
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;
+
+    ALTER TABLE services ADD COLUMN IF NOT EXISTS use_artist_default_rate BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE services ALTER COLUMN default_hourly_rate DROP NOT NULL;
   `);
+
+  await migrateBookingStatuses();
 
   await seedAdminUser();
   await backfillArtistsForUsers();
   await seedCategories();
   await seedPermissionSchema();
+  await seedConsentTemplates();
+  await repairDepositOnlyBookings();
+}
+
+/** Bookings created with a zero hourly rate left total/balance at 0 while deposit > 0. */
+async function migrateBookingStatuses() {
+  await pool.query(`
+    ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_status_check;
+  `);
+
+  await pool.query(`
+    UPDATE bookings SET status = 'booked'
+    WHERE status IN ('pending', 'confirmed', 'rescheduled');
+
+    UPDATE bookings SET status = 'done'
+    WHERE status IN ('completed', 'no_show');
+
+    ALTER TABLE bookings ALTER COLUMN status SET DEFAULT 'booked';
+  `);
+
+  await pool.query(`
+    ALTER TABLE bookings ADD CONSTRAINT bookings_status_check
+      CHECK (status IN ('booked', 'done', 'cancelled'));
+  `);
+}
+
+async function repairDepositOnlyBookings() {
+  const { rowCount } = await pool.query(`
+    UPDATE bookings
+    SET
+      total_amount = deposit_amount,
+      subtotal_amount = deposit_amount,
+      balance_due = deposit_amount - amount_paid
+    WHERE deposit_amount > 0
+      AND total_amount = 0
+      AND amount_paid = 0
+  `);
+  if (rowCount && rowCount > 0) {
+    console.log(`Repaired ${rowCount} booking(s) with zero total but a deposit due.`);
+  }
 }
 
 async function seedAdminUser() {
@@ -363,6 +559,50 @@ const DEFAULT_PERMISSION_GROUPS: Array<{
     ],
   },
 ];
+
+interface ConsentFieldDef {
+  key: string;
+  label: string;
+  type: "yesno" | "textarea";
+  required?: boolean;
+}
+
+const TATTOO_SESSION_CONSENT_FIELDS: ConsentFieldDef[] = [
+  { key: "skinDisorders", label: "Skin disorders such as – Psoriasis, Eczema and Impetigo", type: "yesno" },
+  { key: "epilepsy", label: "Epilepsy", type: "yesno" },
+  { key: "diabetes", label: "Diabetes", type: "yesno" },
+  { key: "bloodBorneVirus", label: "HIV, Hepatitis B or C", type: "yesno" },
+  { key: "latexAllergy", label: "Allergies to Latex — If “Yes” please let your Artist know", type: "yesno" },
+  {
+    key: "medication",
+    label:
+      "Are you taking any medication such as, please list: Anti-depressants, Anti-histamines, Warfarin, Aspirin, Paracetamol",
+    type: "yesno",
+  },
+  { key: "medicationDetails", label: "If yes, please list your medication", type: "textarea", required: false },
+  { key: "herbalMedicine", label: "Have you taken any Herbal medicine in the last 24 hours?", type: "yesno" },
+  { key: "herbalMedicineDetails", label: "If yes, please give details", type: "textarea", required: false },
+  { key: "sleptWell", label: "Have you slept well?", type: "yesno" },
+  { key: "alcoholOrDrugs", label: "Have you consumed any Alcohol or drugs in the last 24 hours?", type: "yesno" },
+  { key: "pregnantOrBreastfeeding", label: "Are you pregnant or breastfeeding?", type: "yesno" },
+];
+
+const TATTOO_SESSION_DISCLAIMER = [
+  "I AM 18 YEARS OR OVER AND GIVE PERMISSION FOR OUCH! TATTOO STUDIO TO SCAN MY ID, IF APPLICABLE, AND KEEP ON FILE. I HAVE FILLED OUT THIS CONSENT FORM TO THE BEST OF MY KNOWLEDGE AND UNDERSTAND THIS IS A LEGAL DOCUMENT. NO PERSONAL INFORMATION GIVEN WILL BE PASSED ON TO ANY THIRD PARTIES. ANY FALSE INFORMATION I HAVE GIVEN IS SOLELY MY RESPONSIBILITY.",
+  "I WILL NOT HOLD OUCH! TATTOO STUDIO RESPONSIBLE FOR ANY MISSPELLING, INCORRECT TIME OR DATE, OR LOSS OF EMPLOYMENT. THE AFTERCARE HAS BEEN EXPLAINED TO ME AND IT IS SOLELY MY RESPONSIBILITY TO LOOK AFTER MY TATTOO.",
+].join("\n\n");
+
+async function seedConsentTemplates() {
+  const { rows } = await pool.query("SELECT id FROM consent_form_templates WHERE key = $1", ["tattoo_session"]);
+  if (rows.length > 0) return;
+
+  await pool.query(
+    `INSERT INTO consent_form_templates (key, name, fields, disclaimer_text)
+     VALUES ($1, $2, $3, $4)`,
+    ["tattoo_session", "Tattoo Session Consent", JSON.stringify(TATTOO_SESSION_CONSENT_FIELDS), TATTOO_SESSION_DISCLAIMER]
+  );
+  console.log("Seeded the Tattoo Session consent form template.");
+}
 
 async function seedPermissionSchema() {
   const { rows } = await pool.query("SELECT COUNT(*) FROM permission_groups");
