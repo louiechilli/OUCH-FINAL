@@ -143,6 +143,18 @@ export async function markAllNotificationsRead(userId: number) {
   );
 }
 
+export async function clearNotification(notificationId: number, userId: number) {
+  const { rowCount } = await pool.query(
+    "DELETE FROM notifications WHERE id = $1 AND user_id = $2",
+    [notificationId, userId]
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+export async function clearAllNotifications(userId: number) {
+  await pool.query("DELETE FROM notifications WHERE user_id = $1", [userId]);
+}
+
 export async function notifyBookingCreated(bookingId: number, actorUserId: number) {
   const { rows } = await pool.query<{
     artist_id: number;

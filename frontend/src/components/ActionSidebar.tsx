@@ -12,10 +12,10 @@ interface Action {
 
 const baseActions: Action[] = [
   { id: "new-sale", label: "New Sale", icon: "+", accent: "pink" },
+  { id: "calendar", label: "Calendar", icon: "CA", accent: "orange" },
   { id: "bookings", label: "Bookings", icon: "BK", accent: "blue" },
   { id: "clients", label: "Clients", icon: "CL", accent: "purple" },
   { id: "catalog", label: "Services", icon: "SV", accent: "blue", adminOnly: true },
-  { id: "artists", label: "Artists", icon: "AR", accent: "pink", adminOnly: true },
 ];
 
 interface ActionSidebarProps {

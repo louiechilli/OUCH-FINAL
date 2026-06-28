@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { useAuth } from "../auth/AuthContext";
+import { useAuth, useIsAdmin } from "../auth/AuthContext";
+import PermissionsPanel from "./PermissionsPanel";
+import ArtistsPanel from "./ArtistsPanel";
+import PaymentTerminalsPanel from "./PaymentTerminalsPanel";
+import TestingPanel from "./TestingPanel";
 
 interface SocialLinks {
   instagram: string;
@@ -25,7 +29,35 @@ interface SettingsPanelProps {
   fullPage?: boolean;
 }
 
-type SettingsTab = "profile" | "security" | "social";
+type SettingsTab = "profile" | "security" | "social" | "admin";
+type AdminSection = "permissions" | "artists" | "payment-terminal" | "testing";
+
+const ADMIN_ITEMS: Array<{ id: AdminSection; label: string; description: string; icon: string }> = [
+  {
+    id: "permissions",
+    label: "Permissions",
+    description: "Manage grouped access for staff accounts",
+    icon: "⚷",
+  },
+  {
+    id: "artists",
+    label: "Artists",
+    description: "Staff accounts, rates and Google Calendar links",
+    icon: "★",
+  },
+  {
+    id: "payment-terminal",
+    label: "Payment terminal",
+    description: "Connect and manage your SumUp Solo card reader",
+    icon: "¤",
+  },
+  {
+    id: "testing",
+    label: "Testing",
+    description: "Debug tools and integration smoke tests",
+    icon: "⚗",
+  },
+];
 
 const EMPTY_SOCIAL: SocialLinks = {
   instagram: "",
@@ -41,7 +73,9 @@ function socialFromApi(links: Partial<SocialLinks> | undefined): SocialLinks {
 
 function SettingsPanel({ onClose, fullPage = false }: SettingsPanelProps) {
   const { fetchWithAuth, user, updateUser, logout } = useAuth();
+  const isAdmin = useIsAdmin();
   const [activeTab, setActiveTab] = useState<SettingsTab>("profile");
+  const [adminSection, setAdminSection] = useState<AdminSection | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -224,6 +258,70 @@ function SettingsPanel({ onClose, fullPage = false }: SettingsPanelProps) {
     setSocialLinks((current) => ({ ...current, [key]: value }));
   };
 
+  const selectTab = (tab: SettingsTab) => {
+    setActiveTab(tab);
+    setAdminSection(null);
+    setError(null);
+    setSuccess(null);
+    if (tab === "security") clearSecurityForms();
+  };
+
+  const renderAdminPanel = () => {
+    switch (adminSection) {
+      case "permissions":
+        return <PermissionsPanel embedded />;
+      case "artists":
+        return <ArtistsPanel embedded />;
+      case "payment-terminal":
+        return <PaymentTerminalsPanel embedded />;
+      case "testing":
+        return <TestingPanel embedded />;
+      default:
+        return null;
+    }
+  };
+
+  const renderAdminMain = () => {
+    if (!isAdmin) {
+      return <p className="permissions-panel__error">Admin access is required to view these settings.</p>;
+    }
+
+    if (adminSection) {
+      return (
+        <div className="settings-admin-section">
+          <button type="button" className="settings-admin-back" onClick={() => setAdminSection(null)}>
+            ← Admin
+          </button>
+          {renderAdminPanel()}
+        </div>
+      );
+    }
+
+    return (
+      <div className="settings-admin-hub">
+        {ADMIN_ITEMS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className="settings-admin-hub__item"
+            onClick={() => setAdminSection(item.id)}
+          >
+            <span className="settings-admin-hub__icon" aria-hidden="true">
+              {item.icon}
+            </span>
+            <span className="settings-admin-hub__copy">
+              <span className="settings-admin-hub__label">{item.label}</span>
+              <span className="settings-admin-hub__description">{item.description}</span>
+            </span>
+            <span className="settings-admin-hub__chevron" aria-hidden="true">
+              ›
+            </span>
+          </button>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className={fullPage ? "detail-screen detail-screen--settings" : "panel settings-panel"}>
       {fullPage ? (
@@ -246,41 +344,39 @@ function SettingsPanel({ onClose, fullPage = false }: SettingsPanelProps) {
               <button
                 type="button"
                 className={`detail-screen__nav-item${activeTab === "profile" ? " detail-screen__nav-item--active" : ""}`}
-                onClick={() => {
-                  setActiveTab("profile");
-                  setError(null);
-                  setSuccess(null);
-                }}
+                onClick={() => selectTab("profile")}
               >
                 Profile
               </button>
               <button
                 type="button"
                 className={`detail-screen__nav-item${activeTab === "security" ? " detail-screen__nav-item--active" : ""}`}
-                onClick={() => {
-                  setActiveTab("security");
-                  setError(null);
-                  setSuccess(null);
-                  clearSecurityForms();
-                }}
+                onClick={() => selectTab("security")}
               >
                 Security
               </button>
               <button
                 type="button"
                 className={`detail-screen__nav-item${activeTab === "social" ? " detail-screen__nav-item--active" : ""}`}
-                onClick={() => {
-                  setActiveTab("social");
-                  setError(null);
-                  setSuccess(null);
-                }}
+                onClick={() => selectTab("social")}
               >
                 Social &amp; bio
               </button>
+              {isAdmin ? (
+                <button
+                  type="button"
+                  className={`detail-screen__nav-item${activeTab === "admin" ? " detail-screen__nav-item--active" : ""}`}
+                  onClick={() => selectTab("admin")}
+                >
+                  Admin
+                </button>
+              ) : null}
             </nav>
 
             <div className="detail-screen__main detail-screen__main--settings">
-              {loading ? (
+              {activeTab === "admin" ? (
+                renderAdminMain()
+              ) : loading ? (
                 <p className="permissions-panel__loading">Loading…</p>
               ) : activeTab === "profile" ? (
                 <div className="settings-form settings-form--wide">
@@ -523,35 +619,30 @@ function SettingsPanel({ onClose, fullPage = false }: SettingsPanelProps) {
           <div className="permissions-panel__tabs">
             <button
               className={`permissions-panel__tab${activeTab === "profile" ? " permissions-panel__tab--active" : ""}`}
-              onClick={() => {
-                setActiveTab("profile");
-                setError(null);
-                setSuccess(null);
-              }}
+              onClick={() => selectTab("profile")}
             >
               Profile
             </button>
             <button
               className={`permissions-panel__tab${activeTab === "security" ? " permissions-panel__tab--active" : ""}`}
-              onClick={() => {
-                setActiveTab("security");
-                setError(null);
-                setSuccess(null);
-                clearSecurityForms();
-              }}
+              onClick={() => selectTab("security")}
             >
               Security
             </button>
             <button
               className={`permissions-panel__tab${activeTab === "social" ? " permissions-panel__tab--active" : ""}`}
-              onClick={() => {
-                setActiveTab("social");
-                setError(null);
-                setSuccess(null);
-              }}
+              onClick={() => selectTab("social")}
             >
               Social &amp; bio
             </button>
+            {isAdmin ? (
+              <button
+                className={`permissions-panel__tab${activeTab === "admin" ? " permissions-panel__tab--active" : ""}`}
+                onClick={() => selectTab("admin")}
+              >
+                Admin
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -567,7 +658,9 @@ function SettingsPanel({ onClose, fullPage = false }: SettingsPanelProps) {
       {error ? <p className="permissions-panel__error">{error}</p> : null}
       {success ? <p className="settings-panel__success">{success}</p> : null}
 
-      {loading ? (
+      {activeTab === "admin" ? (
+        renderAdminMain()
+      ) : loading ? (
         <p className="permissions-panel__loading">Loading…</p>
       ) : activeTab === "profile" ? (
         <div className="settings-form">

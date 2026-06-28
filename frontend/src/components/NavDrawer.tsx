@@ -7,18 +7,13 @@ interface NavItem {
 
 const WORKSPACE_ITEMS: NavItem[] = [
   { id: "bookings", label: "Dashboard", icon: "⌂" },
+  { id: "calendar", label: "Calendar", icon: "▦" },
   { id: "new-booking", label: "New Booking", icon: "+" },
   { id: "clients", label: "Clients", icon: "◔" },
-  { id: "stock", label: "Stock", icon: "▭" },
-  { id: "reports", label: "Reports", icon: "▲" },
 ];
 
 const ACCOUNT_ITEMS: NavItem[] = [
   { id: "settings", label: "Settings", icon: "⚙" },
-  { id: "payment-terminal", label: "Payment terminal", icon: "¤", adminOnly: true },
-  { id: "testing", label: "Testing", icon: "⚗", adminOnly: true },
-  { id: "artists", label: "Artists", icon: "★", adminOnly: true },
-  { id: "permissions", label: "Permissions", icon: "⚷", adminOnly: true },
 ];
 
 interface NavDrawerProps {

@@ -1,10 +1,6 @@
 import ActionSidebar from "../components/ActionSidebar";
 import BookingsPanel from "../components/BookingsPanel";
 import CatalogPanel from "../components/CatalogPanel";
-import PermissionsPanel from "../components/PermissionsPanel";
-import ArtistsPanel from "../components/ArtistsPanel";
-import PaymentTerminalsPanel from "../components/PaymentTerminalsPanel";
-import TestingPanel from "../components/TestingPanel";
 import NewBookingWizard from "./NewBookingWizard";
 import BookingDetailPage from "./BookingDetailPage";
 import ConsentFormPage, { type ConsentFormBooking } from "./ConsentFormPage";
@@ -15,11 +11,12 @@ interface HomeProps {
   onOpenSettings: () => void;
   onOpenBookings: () => void;
   onOpenClients: () => void;
+  onOpenCalendar: () => void;
 }
 
-type HomeView = "bookings" | "permissions" | "catalog" | "artists" | "payment-terminal" | "testing" | "new-booking";
+type HomeView = "bookings" | "catalog" | "new-booking";
 
-function Home({ onOpenSettings, onOpenBookings, onOpenClients }: HomeProps) {
+function Home({ onOpenSettings, onOpenBookings, onOpenClients, onOpenCalendar }: HomeProps) {
   const { user, logout, fetchWithAuth } = useAuth();
   const isAdmin = useIsAdmin();
   const [view, setView] = useState<HomeView>("bookings");
@@ -29,11 +26,6 @@ function Home({ onOpenSettings, onOpenBookings, onOpenClients }: HomeProps) {
   const bookingsToday = useTodaysBookingsCount();
 
   const handleAction = (id: string) => {
-    if (id === "permissions") {
-      if (!isAdmin) return;
-      setView("permissions");
-      return;
-    }
     if (id === "settings") {
       onOpenSettings();
       return;
@@ -41,21 +33,6 @@ function Home({ onOpenSettings, onOpenBookings, onOpenClients }: HomeProps) {
     if (id === "catalog") {
       if (!isAdmin) return;
       setView("catalog");
-      return;
-    }
-    if (id === "artists") {
-      if (!isAdmin) return;
-      setView("artists");
-      return;
-    }
-    if (id === "payment-terminal") {
-      if (!isAdmin) return;
-      setView("payment-terminal");
-      return;
-    }
-    if (id === "testing") {
-      if (!isAdmin) return;
-      setView("testing");
       return;
     }
     if (id === "new-booking" || id === "new-sale") {
@@ -68,6 +45,10 @@ function Home({ onOpenSettings, onOpenBookings, onOpenClients }: HomeProps) {
     }
     if (id === "clients") {
       onOpenClients();
+      return;
+    }
+    if (id === "calendar") {
+      onOpenCalendar();
     }
   };
 
@@ -132,16 +113,8 @@ function Home({ onOpenSettings, onOpenBookings, onOpenClients }: HomeProps) {
         onLogout={logout}
         bookingsToday={bookingsToday}
       />
-      {view === "permissions" && isAdmin ? (
-        <PermissionsPanel onClose={() => setView("bookings")} />
-      ) : view === "catalog" && isAdmin ? (
+      {view === "catalog" && isAdmin ? (
         <CatalogPanel onClose={() => setView("bookings")} />
-      ) : view === "artists" && isAdmin ? (
-        <ArtistsPanel onClose={() => setView("bookings")} />
-      ) : view === "payment-terminal" && isAdmin ? (
-        <PaymentTerminalsPanel onClose={() => setView("bookings")} />
-      ) : view === "testing" && isAdmin ? (
-        <TestingPanel onClose={() => setView("bookings")} />
       ) : (
         <BookingsPanel
           onViewBooking={setViewingBookingId}

@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { requireAuth } from "../auth/middleware";
 import {
+  clearAllNotifications,
+  clearNotification,
   getUnreadCount,
   listNotifications,
   markAllNotificationsRead,
@@ -42,5 +44,26 @@ notificationsRouter.patch("/:id/read", async (req, res) => {
 
 notificationsRouter.post("/read-all", async (req, res) => {
   await markAllNotificationsRead(req.user!.id);
+  res.json({ ok: true });
+});
+
+notificationsRouter.delete("/", async (req, res) => {
+  await clearAllNotifications(req.user!.id);
+  res.json({ ok: true });
+});
+
+notificationsRouter.delete("/:id", async (req, res) => {
+  const notificationId = Number(req.params.id);
+  if (!Number.isFinite(notificationId)) {
+    res.status(400).json({ error: "Invalid notification id" });
+    return;
+  }
+
+  const cleared = await clearNotification(notificationId, req.user!.id);
+  if (!cleared) {
+    res.status(404).json({ error: "Notification not found" });
+    return;
+  }
+
   res.json({ ok: true });
 });

@@ -2,18 +2,35 @@ import { Router } from "express";
 import { pool } from "../db";
 import { requireAuth } from "../auth/middleware";
 import { removeBlockFromCalendar, syncBlockToCalendar } from "./calendarSync";
+import { logActivity } from "../activity/log";
 
 export const blocksRouter = Router();
 blocksRouter.use(requireAuth);
 
 blocksRouter.get("/", async (req, res) => {
-  const { artistId } = req.query as Record<string, string | undefined>;
+  const { from, to } = req.query as Record<string, string | undefined>;
+  const rawArtistId = req.query.artistId;
+  const artistIds = (Array.isArray(rawArtistId) ? rawArtistId : rawArtistId ? [rawArtistId] : [])
+    .map((value) => Number(value))
+    .filter((value) => !Number.isNaN(value));
+
   const conditions: string[] = [];
   const params: unknown[] = [];
 
-  if (artistId) {
-    params.push(Number(artistId));
+  if (artistIds.length === 1) {
+    params.push(artistIds[0]);
     conditions.push(`artist_id = $${params.length}`);
+  } else if (artistIds.length > 1) {
+    params.push(artistIds);
+    conditions.push(`artist_id = ANY($${params.length})`);
+  }
+  if (from) {
+    params.push(from);
+    conditions.push(`ends_at >= $${params.length}`);
+  }
+  if (to) {
+    params.push(to);
+    conditions.push(`starts_at <= $${params.length}`);
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -45,6 +62,14 @@ blocksRouter.post("/", async (req, res) => {
     [artistId, starts, ends, reason ?? null]
   );
   const block = rows[0];
+  await logActivity({
+    entityType: "calendar_block",
+    entityId: block.id,
+    eventType: "created",
+    actorUserId: req.user!.id,
+    description: `Block-out #${block.id} created for artist ${artistId}`,
+    metadata: { artistId, startsAt: block.starts_at, endsAt: block.ends_at },
+  });
 
   try {
     await syncBlockToCalendar(block.id);
@@ -72,6 +97,13 @@ blocksRouter.delete("/:id", async (req, res) => {
     console.error(`Failed to remove block ${blockId} from Google Calendar`, err)
   );
   await pool.query("DELETE FROM calendar_blocks WHERE id = $1", [blockId]);
+  await logActivity({
+    entityType: "calendar_block",
+    entityId: blockId,
+    eventType: "deleted",
+    actorUserId: req.user!.id,
+    description: `Block-out #${blockId} deleted`,
+  });
 
   res.json({ status: "deleted" });
 });

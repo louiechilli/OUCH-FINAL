@@ -379,7 +379,7 @@ function BookingsPage({ onBack }: BookingsPageProps) {
                 options={STATUS_FILTER_OPTIONS}
                 selected={statuses}
                 onChange={(values) => setStatuses(values as BookingStatus[])}
-                emptyLabel="No statuses"
+                placeholder="Select statuses"
               />
             </div>
 

@@ -11,35 +11,25 @@ interface FilterMultiSelectProps {
   onChange: (selected: string[]) => void;
   allLabel?: string;
   emptyLabel?: string;
+  placeholder?: string;
 }
 
-function selectionLabel(
-  options: FilterMultiSelectOption[],
-  selected: string[],
-  allLabel?: string,
-  emptyLabel?: string
-) {
-  if (allLabel && selected.length === 0) return allLabel;
-  if (selected.length === 0) return emptyLabel ?? "None";
-  if (selected.length === 1) {
-    return options.find((option) => option.value === selected[0])?.label ?? "1 selected";
-  }
-  if (selected.length === options.length) {
-    return options.map((option) => option.label).join(", ");
-  }
-  if (selected.length <= 2) {
-    return selected
-      .map((value) => options.find((option) => option.value === value)?.label)
-      .filter(Boolean)
-      .join(", ");
-  }
-  return `${selected.length} selected`;
+function optionLabel(options: FilterMultiSelectOption[], value: string) {
+  return options.find((option) => option.value === value)?.label ?? value;
 }
 
-function FilterMultiSelect({ options, selected, onChange, allLabel, emptyLabel }: FilterMultiSelectProps) {
+function FilterMultiSelect({
+  options,
+  selected,
+  onChange,
+  allLabel,
+  emptyLabel = "None",
+  placeholder,
+}: FilterMultiSelectProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const listId = useId();
+  const allSelected = Boolean(allLabel) && selected.length === 0;
 
   useEffect(() => {
     if (!open) return;
@@ -65,53 +55,110 @@ function FilterMultiSelect({ options, selected, onChange, allLabel, emptyLabel }
   function toggleValue(value: string) {
     if (selected.includes(value)) {
       onChange(selected.filter((item) => item !== value));
-    } else {
-      onChange([...selected, value]);
+      return;
     }
+    onChange([...selected, value]);
   }
 
   function selectAll() {
     onChange([]);
   }
 
-  const allSelected = Boolean(allLabel) && selected.length === 0;
+  function selectEveryOption() {
+    onChange(options.map((option) => option.value));
+  }
+
+  const triggerPlaceholder = placeholder ?? allLabel ?? emptyLabel;
 
   return (
-    <div className="filter-multi-select" ref={rootRef}>
+    <div className={`dropdown-select${open ? " dropdown-select--open" : ""}`} ref={rootRef}>
       <button
         type="button"
-        className="filter-multi-select__trigger bookings-page__select"
+        className="dropdown-select__trigger"
         onClick={() => setOpen((value) => !value)}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listId}
       >
-        <span className="filter-multi-select__label">
-          {selectionLabel(options, selected, allLabel, emptyLabel)}
+        <span className="dropdown-select__value">
+          {allSelected ? (
+            <span className="dropdown-select__text">{allLabel}</span>
+          ) : selected.length === 0 ? (
+            <span className="dropdown-select__text dropdown-select__text--placeholder">{triggerPlaceholder}</span>
+          ) : (
+            <span className="dropdown-select__chips">
+              {selected.slice(0, 3).map((value) => (
+                <span key={value} className="dropdown-select__chip">
+                  {optionLabel(options, value)}
+                </span>
+              ))}
+              {selected.length > 3 ? (
+                <span className="dropdown-select__chip dropdown-select__chip--more">+{selected.length - 3}</span>
+              ) : null}
+            </span>
+          )}
         </span>
-        <span className="filter-multi-select__chevron" aria-hidden="true">
-          ▾
-        </span>
+        <span className="dropdown-select__chevron" aria-hidden="true" />
       </button>
 
       {open ? (
-        <div className="filter-multi-select__menu" id={listId} role="listbox" aria-multiselectable="true">
+        <div className="dropdown-select__panel" id={listId} role="listbox" aria-multiselectable="true">
           {allLabel ? (
-            <label className="filter-multi-select__option">
-              <input type="checkbox" checked={allSelected} onChange={selectAll} />
-              <span>{allLabel}</span>
-            </label>
+            <>
+              <button
+                type="button"
+                role="option"
+                aria-selected={allSelected}
+                className={`dropdown-select__option${allSelected ? " dropdown-select__option--selected" : ""}`}
+                onClick={selectAll}
+              >
+                <span>{allLabel}</span>
+                {allSelected ? <span className="dropdown-select__check" aria-hidden="true" /> : null}
+              </button>
+              <div className="dropdown-select__divider" role="presentation" />
+            </>
           ) : null}
-          {options.map((option) => (
-            <label key={option.value} className="filter-multi-select__option">
-              <input
-                type="checkbox"
-                checked={!allSelected && selected.includes(option.value)}
-                onChange={() => toggleValue(option.value)}
-              />
-              <span>{option.label}</span>
-            </label>
-          ))}
+
+          <ul className="dropdown-select__list">
+            {options.map((option) => {
+              const isSelected = !allSelected && selected.includes(option.value);
+              return (
+                <li key={option.value}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    className={`dropdown-select__option${isSelected ? " dropdown-select__option--selected" : ""}`}
+                    onClick={() => toggleValue(option.value)}
+                  >
+                    <span>{option.label}</span>
+                    {isSelected ? <span className="dropdown-select__check" aria-hidden="true" /> : null}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+
+          {!allLabel && options.length > 1 ? (
+            <div className="dropdown-select__footer">
+              <button
+                type="button"
+                className="dropdown-select__footer-action"
+                onClick={selectEveryOption}
+                disabled={selected.length === options.length}
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                className="dropdown-select__footer-action"
+                onClick={() => onChange([])}
+                disabled={selected.length === 0}
+              >
+                Clear
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

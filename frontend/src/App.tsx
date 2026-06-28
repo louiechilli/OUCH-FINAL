@@ -4,6 +4,7 @@ import LoginScreen from "./pages/LoginScreen";
 import SettingsPage from "./pages/SettingsPage";
 import BookingsPage from "./pages/BookingsPage";
 import ClientsPage from "./pages/ClientsPage";
+import CalendarPage from "./pages/CalendarPage";
 import PortalPage, { getPortalTokenFromPath } from "./pages/PortalPage";
 import PinSetupScreen from "./pages/PinSetupScreen";
 import PinLockScreen from "./pages/PinLockScreen";
@@ -19,7 +20,7 @@ import OfflineBanner from "./connectivity/OfflineBanner";
 function AuthGate() {
   const { phase, lock, fetchWithAuth } = useAuth();
   const push = usePushNotifications(fetchWithAuth, phase === "unlocked");
-  const [route, setRoute] = useState<"home" | "settings" | "bookings" | "clients">("home");
+  const [route, setRoute] = useState<"home" | "settings" | "bookings" | "clients" | "calendar">("home");
 
   useIdleLock(phase === "unlocked", lock);
 
@@ -55,6 +56,15 @@ function AuthGate() {
     );
   }
 
+  if (route === "calendar") {
+    return (
+      <>
+        <PushEnableBanner push={push} />
+        <CalendarPage onBack={() => setRoute("home")} />
+      </>
+    );
+  }
+
   return (
     <>
       <PushEnableBanner push={push} />
@@ -62,6 +72,7 @@ function AuthGate() {
         onOpenSettings={() => setRoute("settings")}
         onOpenBookings={() => setRoute("bookings")}
         onOpenClients={() => setRoute("clients")}
+        onOpenCalendar={() => setRoute("calendar")}
       />
     </>
   );

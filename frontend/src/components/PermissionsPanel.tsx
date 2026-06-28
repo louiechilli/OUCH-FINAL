@@ -27,10 +27,11 @@ interface PermissionUser {
 }
 
 interface PermissionsPanelProps {
-  onClose: () => void;
+  onClose?: () => void;
+  embedded?: boolean;
 }
 
-function PermissionsPanel({ onClose }: PermissionsPanelProps) {
+function PermissionsPanel({ onClose, embedded = false }: PermissionsPanelProps) {
   const { fetchWithAuth, user } = useAuth();
   const [groups, setGroups] = useState<PermissionGroup[]>([]);
   const [users, setUsers] = useState<PermissionUser[]>([]);
@@ -148,31 +149,57 @@ function PermissionsPanel({ onClose }: PermissionsPanelProps) {
   }
 
   return (
-    <div className="panel permissions-panel">
-      <div className="panel__header">
-        <div>
-          <h2>Permissions</h2>
-          <p className="panel__subtitle">Manage grouped access for staff accounts</p>
+    <div className={embedded ? "settings-embedded-panel permissions-panel" : "panel permissions-panel"}>
+      {embedded ? (
+        <div className="settings-embedded-panel__header">
+          <div>
+            <h3>Permissions</h3>
+            <p className="panel__subtitle">Manage grouped access for staff accounts</p>
+          </div>
+          <div className="permissions-panel__tabs">
+            <button
+              className={`permissions-panel__tab${activeTab === "assign" ? " permissions-panel__tab--active" : ""}`}
+              onClick={() => setActiveTab("assign")}
+            >
+              Assign to users
+            </button>
+            <button
+              className={`permissions-panel__tab${activeTab === "schema" ? " permissions-panel__tab--active" : ""}`}
+              onClick={() => setActiveTab("schema")}
+            >
+              Permission groups
+            </button>
+          </div>
         </div>
-        <button className="permissions-panel__close" onClick={onClose} aria-label="Close">
-          ×
-        </button>
-      </div>
+      ) : (
+        <header className="panel-intro">
+          <div className="panel-intro__content">
+            <div className="panel-intro__heading">
+              <h2>Permissions</h2>
+              <p className="panel__subtitle">Manage grouped access for staff accounts</p>
+            </div>
 
-      <div className="permissions-panel__tabs">
-        <button
-          className={`permissions-panel__tab${activeTab === "assign" ? " permissions-panel__tab--active" : ""}`}
-          onClick={() => setActiveTab("assign")}
-        >
-          Assign to users
-        </button>
-        <button
-          className={`permissions-panel__tab${activeTab === "schema" ? " permissions-panel__tab--active" : ""}`}
-          onClick={() => setActiveTab("schema")}
-        >
-          Permission groups
-        </button>
-      </div>
+            <div className="permissions-panel__tabs">
+              <button
+                className={`permissions-panel__tab${activeTab === "assign" ? " permissions-panel__tab--active" : ""}`}
+                onClick={() => setActiveTab("assign")}
+              >
+                Assign to users
+              </button>
+              <button
+                className={`permissions-panel__tab${activeTab === "schema" ? " permissions-panel__tab--active" : ""}`}
+                onClick={() => setActiveTab("schema")}
+              >
+                Permission groups
+              </button>
+            </div>
+          </div>
+
+          <button className="panel-intro__action permissions-panel__close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </header>
+      )}
 
       {error ? <p className="permissions-panel__error">{error}</p> : null}
 
