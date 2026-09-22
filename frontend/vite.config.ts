@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig({
+  envDir: "..",
   plugins: [
     react(),
     VitePWA({
@@ -52,6 +53,15 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
-    allowedHosts: ["dev-ouch.chillingworths.co.uk"],
+    allowedHosts: [
+      "dev-ouch.chillingworths.co.uk",
+      "dev.ouch.chillingworths.co.uk",
+      "localhost",
+    ],
+    hmr: {
+      protocol: "wss",
+      clientPort: 443,
+      host: "dev-ouch.chillingworths.co.uk",
+    },
   },
 });

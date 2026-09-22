@@ -1,6 +1,7 @@
 import { pool } from "../db";
 import { getCalendarProvider } from "./index";
 import type { CalendarEvent } from "./CalendarProvider";
+import { logActivity } from "../activity/log";
 
 // Tags every event we create so a later webhook can recognise it as ours
 // instead of mistaking our own write for an external change.
@@ -109,6 +110,13 @@ async function cancelBookingFromRemote(bookingId: number, eventId: string) {
     `INSERT INTO booking_events (booking_id, event_type, notes) VALUES ($1, 'cancelled', $2)`,
     [bookingId, "Cancelled directly on Google Calendar"]
   );
+  await logActivity({
+    entityType: "booking",
+    entityId: bookingId,
+    eventType: "cancelled",
+    actorLabel: "google_calendar",
+    description: `Booking #${bookingId} cancelled directly on Google Calendar`,
+  });
 }
 
 // Times are the one thing we sync back from a manual edit in Google
@@ -140,6 +148,14 @@ async function syncBookingTimesFromRemote(bookingId: number, event: CalendarEven
      VALUES ($1, 'rescheduled', $2, $3, 'Time changed directly on Google Calendar')`,
     [bookingId, booking.starts_at, event.startsAt.toISOString()]
   );
+  await logActivity({
+    entityType: "booking",
+    entityId: bookingId,
+    eventType: "rescheduled",
+    actorLabel: "google_calendar",
+    description: `Booking #${bookingId} time changed directly on Google Calendar`,
+    changes: { starts_at: { from: booking.starts_at, to: event.startsAt.toISOString() } },
+  });
 }
 
 async function syncBlockFromRemote(blockId: number, event: CalendarEvent) {
@@ -152,11 +168,22 @@ async function syncBlockFromRemote(blockId: number, event: CalendarEvent) {
 }
 
 async function upsertExternalBlock(artistId: number, event: CalendarEvent) {
-  await pool.query(
+  const { rows } = await pool.query<{ id: number; inserted: boolean }>(
     `INSERT INTO calendar_blocks (artist_id, starts_at, ends_at, reason, source, google_calendar_event_id)
      VALUES ($1, $2, $3, $4, 'google_calendar', $5)
-     ON CONFLICT (google_calendar_event_id)
-     DO UPDATE SET starts_at = $2, ends_at = $3, reason = $4, updated_at = now()`,
+     ON CONFLICT (google_calendar_event_id) WHERE google_calendar_event_id IS NOT NULL
+     DO UPDATE SET starts_at = $2, ends_at = $3, reason = $4, updated_at = now()
+     RETURNING id, (xmax = 0) AS inserted`,
     [artistId, event.startsAt, event.endsAt, event.summary ?? null, event.id]
   );
+  if (rows[0].inserted) {
+    await logActivity({
+      entityType: "calendar_block",
+      entityId: rows[0].id,
+      eventType: "created",
+      actorLabel: "google_calendar",
+      description: `Block-out picked up from an external event on artist ${artistId}'s calendar`,
+      metadata: { artistId, reason: event.summary ?? null },
+    });
+  }
 }

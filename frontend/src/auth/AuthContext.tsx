@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { recordActivity, shouldRequirePin } from "./activity";
+import { useConnectivity } from "../connectivity/ConnectivityContext";
 
 // Same-origin by default — nginx proxies /api/* to the backend regardless of
 // which host this is opened from (see PATTERNS.md / past push notification fix).
@@ -25,6 +27,7 @@ interface AuthContextValue {
   unlockWithPin: (pin: string) => Promise<void>;
   lock: () => void;
   logout: () => void;
+  updateUser: (patch: Partial<Pick<AuthUser, "name" | "email">>) => void;
   fetchWithAuth: (path: string, init?: RequestInit) => Promise<Response>;
 }
 
@@ -40,6 +43,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [error, setError] = useState<string | null>(null);
   const accessTokenRef = useRef<string | null>(null);
+  const { reportFailure, reportSuccess } = useConnectivity();
+
+  // Any response at all — including 4xx/5xx — means the server is reachable,
+  // so only a thrown network error (server down / no connection) flips us offline.
+  const trackedFetch = useCallback(
+    async (...args: Parameters<typeof fetch>) => {
+      try {
+        const res = await fetch(...args);
+        reportSuccess();
+        return res;
+      } catch (err) {
+        reportFailure();
+        throw err;
+      }
+    },
+    [reportFailure, reportSuccess],
+  );
 
   useEffect(() => {
     const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
@@ -48,7 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    fetch(`${apiUrl}/api/auth/refresh`, {
+    trackedFetch(`${apiUrl}/api/auth/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken }),
@@ -58,9 +78,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const data = await res.json();
         accessTokenRef.current = data.accessToken;
         setUser(data.user);
-        // Cold start always re-asks for the PIN, like a banking app — the
-        // long-lived refresh token just means you skip email/password.
-        setPhase(data.user.pinRequired ? "pin-setup" : "locked");
+        if (data.user.pinRequired) {
+          setPhase("pin-setup");
+        } else {
+          setPhase(shouldRequirePin() ? "locked" : "unlocked");
+        }
       })
       .catch(() => {
         localStorage.removeItem(REFRESH_TOKEN_KEY);
@@ -70,7 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     setError(null);
-    const res = await fetch(`${apiUrl}/api/auth/login`, {
+    const res = await trackedFetch(`${apiUrl}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
@@ -84,12 +106,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
     accessTokenRef.current = data.accessToken;
     setUser(data.user);
-    setPhase(data.user.pinRequired ? "pin-setup" : "unlocked");
-  }, []);
+    if (data.user.pinRequired) {
+      setPhase("pin-setup");
+    } else {
+      recordActivity();
+      setPhase("unlocked");
+    }
+  }, [trackedFetch]);
 
   const setupPin = useCallback(async (pin: string, confirmPin: string) => {
     setError(null);
-    const res = await fetch(`${apiUrl}/api/auth/pin/setup`, {
+    const res = await trackedFetch(`${apiUrl}/api/auth/pin/setup`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -103,8 +130,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(message);
     }
     setUser((current) => (current ? { ...current, pinRequired: false } : current));
+    recordActivity();
     setPhase("unlocked");
-  }, []);
+  }, [trackedFetch]);
 
   const unlockWithPin = useCallback(async (pin: string) => {
     setError(null);
@@ -114,7 +142,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const res = await fetch(`${apiUrl}/api/auth/pin/verify`, {
+    const res = await trackedFetch(`${apiUrl}/api/auth/pin/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken, pin }),
@@ -127,11 +155,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await res.json();
     accessTokenRef.current = data.accessToken;
     setUser(data.user);
+    recordActivity();
     setPhase("unlocked");
-  }, []);
+  }, [trackedFetch]);
 
   const lock = useCallback(() => {
     setPhase((current) => (current === "unlocked" ? "locked" : current));
+  }, []);
+
+  const updateUser = useCallback((patch: Partial<Pick<AuthUser, "name" | "email">>) => {
+    setUser((current) => (current ? { ...current, ...patch } : current));
   }, []);
 
   const logout = useCallback(() => {
@@ -142,28 +175,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null);
     setPhase("login");
     if (refreshToken) {
-      fetch(`${apiUrl}/api/auth/logout`, {
+      trackedFetch(`${apiUrl}/api/auth/logout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refreshToken }),
       }).catch(() => {});
     }
-  }, []);
+  }, [trackedFetch]);
 
-  const fetchWithAuth = useCallback(async (path: string, init?: RequestInit) => {
-    const headers = new Headers(init?.headers);
-    if (accessTokenRef.current) {
-      headers.set("Authorization", `Bearer ${accessTokenRef.current}`);
-    }
-    if (init?.body && !headers.has("Content-Type")) {
-      headers.set("Content-Type", "application/json");
-    }
-    return fetch(`${apiUrl}${path}`, { ...init, headers });
-  }, []);
+  const fetchWithAuth = useCallback(
+    async (path: string, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      if (accessTokenRef.current) {
+        headers.set("Authorization", `Bearer ${accessTokenRef.current}`);
+      }
+      if (init?.body && !headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
+      }
+      return trackedFetch(`${apiUrl}${path}`, { ...init, headers });
+    },
+    [trackedFetch],
+  );
 
   return (
     <AuthContext.Provider
-      value={{ phase, user, error, login, setupPin, unlockWithPin, lock, logout, fetchWithAuth }}
+      value={{ phase, user, error, login, setupPin, unlockWithPin, lock, logout, updateUser, fetchWithAuth }}
     >
       {children}
     </AuthContext.Provider>

@@ -1,15 +1,27 @@
+import { useState, type ReactNode } from "react";
 import Home from "./pages/Home";
 import LoginScreen from "./pages/LoginScreen";
+import SettingsPage from "./pages/SettingsPage";
+import BookingsPage from "./pages/BookingsPage";
+import ClientsPage from "./pages/ClientsPage";
+import CalendarPage from "./pages/CalendarPage";
+import PortalPage, { getPortalTokenFromPath } from "./pages/PortalPage";
 import PinSetupScreen from "./pages/PinSetupScreen";
 import PinLockScreen from "./pages/PinLockScreen";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { useIdleLock } from "./auth/useIdleLock";
 import { useLockLandscape } from "./hooks/useLockLandscape";
+import { useBlockSwipeNavigation } from "./hooks/useBlockSwipeNavigation";
 import { usePushNotifications } from "./hooks/usePushNotifications";
+import PushEnableWall from "./components/PushEnableWall";
+import { notificationsRequired } from "./lib/env";
+import { ConnectivityProvider } from "./connectivity/ConnectivityContext";
+import OfflineBanner from "./connectivity/OfflineBanner";
 
 function AuthGate() {
-  const { phase, lock } = useAuth();
-  const push = usePushNotifications();
+  const { phase, lock, fetchWithAuth } = useAuth();
+  const push = usePushNotifications(fetchWithAuth, phase === "unlocked");
+  const [route, setRoute] = useState<"home" | "settings" | "bookings" | "clients" | "calendar">("home");
 
   useIdleLock(phase === "unlocked", lock);
 
@@ -18,17 +30,60 @@ function AuthGate() {
   if (phase === "pin-setup") return <PinSetupScreen />;
   if (phase === "locked") return <PinLockScreen />;
 
-  return <Home push={push} />;
+  const shell = (content: ReactNode) => (
+    <>
+      {notificationsRequired ? <PushEnableWall push={push} /> : null}
+      {content}
+    </>
+  );
+
+  if (route === "settings") {
+    return shell(<SettingsPage onBack={() => setRoute("home")} />);
+  }
+
+  if (route === "bookings") {
+    return shell(<BookingsPage onBack={() => setRoute("home")} />);
+  }
+
+  if (route === "clients") {
+    return shell(<ClientsPage onBack={() => setRoute("home")} />);
+  }
+
+  if (route === "calendar") {
+    return shell(<CalendarPage onBack={() => setRoute("home")} />);
+  }
+
+  return shell(
+    <Home
+      onOpenSettings={() => setRoute("settings")}
+      onOpenBookings={() => setRoute("bookings")}
+      onOpenClients={() => setRoute("clients")}
+      onOpenCalendar={() => setRoute("calendar")}
+    />
+  );
+}
+
+function StaffShell() {
+  useLockLandscape();
+  useBlockSwipeNavigation();
+
+  return (
+    <ConnectivityProvider>
+      <OfflineBanner />
+      <AuthProvider>
+        <AuthGate />
+      </AuthProvider>
+    </ConnectivityProvider>
+  );
 }
 
 function App() {
-  useLockLandscape();
+  const portalToken = getPortalTokenFromPath();
+  if (portalToken) {
+    return <PortalPage token={portalToken} />;
+  }
 
-  return (
-    <AuthProvider>
-      <AuthGate />
-    </AuthProvider>
-  );
+  return <StaffShell />;
 }
 
 export default App;
