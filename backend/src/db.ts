@@ -404,6 +404,7 @@ export async function runMigrations() {
   await seedPermissionSchema();
   await seedConsentTemplates();
   await repairDepositOnlyBookings();
+  await migrateSessionServicePricing();
 }
 
 /** Bookings created with a zero hourly rate left total/balance at 0 while deposit > 0. */
@@ -426,6 +427,18 @@ async function migrateBookingStatuses() {
     ALTER TABLE bookings ADD CONSTRAINT bookings_status_check
       CHECK (status IN ('booked', 'done', 'cancelled'));
   `);
+}
+
+/** Session-style services should bill each artist's profile rate, not one studio-wide rate. */
+async function migrateSessionServicePricing() {
+  const { rowCount } = await pool.query(`
+    UPDATE services
+    SET use_artist_default_rate = TRUE, default_hourly_rate = NULL
+    WHERE slug = 'tattoo-session' AND use_artist_default_rate = FALSE
+  `);
+  if (rowCount && rowCount > 0) {
+    console.log("Updated Tattoo Session to use each artist's hourly rate.");
+  }
 }
 
 async function repairDepositOnlyBookings() {

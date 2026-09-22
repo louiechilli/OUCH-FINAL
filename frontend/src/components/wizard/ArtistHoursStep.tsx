@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { formatBookingPrice } from "../../lib/bookingPricing";
 import type { ArtistOption, ResolvedRate, ServiceOption } from "../../pages/NewBookingWizard";
 
 interface ArtistHoursStepProps {
@@ -131,13 +132,7 @@ function ArtistHoursStep({
             +
           </button>
         </div>
-        {rate && (
-          <p className="wizard-price-preview">
-            {rate.hourlyRate > 0
-              ? `£${(rate.hourlyRate * hours).toFixed(2)} (£${rate.hourlyRate}/hr)`
-              : "No charge"}
-          </p>
-        )}
+        {rate && <p className="wizard-price-preview">{formatBookingPrice(rate, hours)}</p>}
       </div>
 
       <button

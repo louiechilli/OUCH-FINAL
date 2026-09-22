@@ -2,10 +2,8 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: epos
-      POSTGRES_PASSWORD: epos
-      POSTGRES_DB: epos
+    env_file:
+      - .env
     ports:
       - "5432:5432"
     volumes:
@@ -16,18 +14,22 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     build: ./backend
     restart: unless-stopped
-    environment:
-      PORT: 4000
-      DATABASE_URL: postgresql://epos:epos@db:5432/epos
-      VAPID_PUBLIC_KEY: BEOGN4abGDFufHogRWa3SL9A2ZF552IK7DsPeFdIMlQsRn4OFD3ByaWtKtU8KzYvnlB60jyUPDhCqdsZ-GWiwYs
-      VAPID_PRIVATE_KEY: u6CanvRiDqHsz6bQyIFN1CWrXMvNZ8Gd3R5x4R_WJLs
-      JWT_SECRET: 9f3c2e7a6b1d4f0c8e5a2b7d9c1f4e6a8b3d5f7c9e1a3b5d7f9c2e4a6b8d0f2c
-      # Required for Google Calendar sync — see GOOGLE_CALENDAR.md.
-      # GOOGLE_SERVICE_ACCOUNT_KEY: '{"type":"service_account",...}'
-      # PUBLIC_BASE_URL: https://dev.ouch.chillingworths.co.uk
+    env_file:
+      - .env
     ports:
       - "4000:4000"
     volumes:
@@ -36,17 +38,40 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
   frontend:
     build: ./frontend
     restart: unless-stopped
-    ports:
-      - "5173:5173"
+    env_file:
+      - .env
     volumes:
       - ./frontend:/app
       - /app/node_modules
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:5173/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
   nginx:
     image: nginx:alpine
@@ -56,8 +81,10 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      - frontend
-      - backend
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
 
 volumes:
   db_data:

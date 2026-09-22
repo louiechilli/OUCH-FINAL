@@ -3,9 +3,13 @@ import { useAuth, useIsAdmin } from "../auth/AuthContext";
 
 interface TerminalConfig {
   configured: boolean;
+  checkoutConfigured: boolean;
   merchantCode: string | null;
   currency: string;
   missing: string[];
+  checkoutMissing: string[];
+  apiConnected?: boolean | null;
+  apiError?: string | null;
 }
 
 interface TerminalReader {
@@ -61,6 +65,7 @@ function PaymentTerminalsPanel({ onClose, embedded = false }: PaymentTerminalsPa
   const [config, setConfig] = useState<TerminalConfig | null>(null);
   const [readers, setReaders] = useState<TerminalReader[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [pairingOpen, setPairingOpen] = useState(false);
   const [deviceStatus, setDeviceStatus] = useState<DeviceStatus | null>(null);
   const [pairingCode, setPairingCode] = useState("");
   const [pairingName, setPairingName] = useState("Front desk Solo");
@@ -74,6 +79,9 @@ function PaymentTerminalsPanel({ onClose, embedded = false }: PaymentTerminalsPa
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastLoggedRef = useRef<string>("");
+  const pairingCodeRef = useRef<HTMLInputElement>(null);
+  const selectedIdRef = useRef<number | null>(null);
+  selectedIdRef.current = selectedId;
 
   const selected = readers.find((r) => r.id === selectedId) ?? null;
 
@@ -117,7 +125,11 @@ function PaymentTerminalsPanel({ onClose, embedded = false }: PaymentTerminalsPa
     try {
       await loadConfig();
       const list = await loadReaders();
-      if (selectedId && !list.some((r: TerminalReader) => r.id === selectedId)) {
+      const currentSelected = selectedIdRef.current;
+      if (
+        currentSelected !== null &&
+        !list.some((r: TerminalReader) => r.id === currentSelected)
+      ) {
         setSelectedId(null);
         setDeviceStatus(null);
       }
@@ -126,7 +138,7 @@ function PaymentTerminalsPanel({ onClose, embedded = false }: PaymentTerminalsPa
     } finally {
       setLoading(false);
     }
-  }, [loadConfig, loadReaders, selectedId]);
+  }, [loadConfig, loadReaders]);
 
   useEffect(() => {
     if (isAdmin) void refresh();
@@ -155,6 +167,25 @@ function PaymentTerminalsPanel({ onClose, embedded = false }: PaymentTerminalsPa
     };
   }, [selectedId, loadDeviceStatus]);
 
+  useEffect(() => {
+    if (pairingOpen) {
+      pairingCodeRef.current?.focus();
+    }
+  }, [pairingOpen]);
+
+  const openPairing = () => {
+    setPairingOpen(true);
+    setSelectedId(null);
+    setDeviceStatus(null);
+    setError(null);
+    setSuccess(null);
+  };
+
+  const closePairing = () => {
+    setPairingOpen(false);
+    setPairingCode("");
+  };
+
   useEffect(() => () => clearPaymentPoll(), [clearPaymentPoll]);
 
   const showSuccess = (message: string) => {
@@ -172,7 +203,7 @@ function PaymentTerminalsPanel({ onClose, embedded = false }: PaymentTerminalsPa
 
   const handlePair = async () => {
     if (!pairingCode.trim() || !pairingName.trim()) {
-      setError("Enter the pairing code from your Solo and a name for this terminal");
+      setError("Enter the Cloud API pairing code from your Solo and a name for this terminal");
       return;
     }
 
@@ -193,6 +224,7 @@ function PaymentTerminalsPanel({ onClose, embedded = false }: PaymentTerminalsPa
       }
       const data = await res.json();
       setPairingCode("");
+      setPairingOpen(false);
       showSuccess(`Paired "${data.reader.name}" — confirm on the Solo screen`);
       const list = await loadReaders();
       const stored = list.find((r) => r.externalId === data.reader.id);
@@ -379,9 +411,21 @@ function PaymentTerminalsPanel({ onClose, embedded = false }: PaymentTerminalsPa
           <strong>SumUp is not configured.</strong> Add these environment variables to the backend and restart:
           <code>{config.missing.join(", ")}</code>
         </div>
+      ) : config?.configured && config.apiConnected === false ? (
+        <div className="terminals-banner terminals-banner--warning">
+          <strong>SumUp API connection failed.</strong> {config.apiError ?? "Could not reach SumUp."}
+          {" "}Check <code>SUMUP_API_KEY</code> and <code>SUMUP_MERCHANT_CODE</code> in your backend{" "}
+          <code>.env</code>, then restart the backend container.
+        </div>
       ) : config?.configured ? (
         <div className="terminals-banner terminals-banner--ok">
           Connected to merchant <strong>{config.merchantCode}</strong> · currency {config.currency}
+          {!config.checkoutConfigured ? (
+            <>
+              {" "}
+              · test payments need <code>{config.checkoutMissing.join(", ")}</code>
+            </>
+          ) : null}
         </div>
       ) : null}
 
@@ -392,7 +436,7 @@ function PaymentTerminalsPanel({ onClose, embedded = false }: PaymentTerminalsPa
           <div className="catalog-list">
             <div className="catalog-list__header">
               <h3>Terminals</h3>
-              <button type="button" className="catalog-list__add" onClick={() => setSelectedId(-1)}>
+              <button type="button" className="catalog-list__add" onClick={openPairing}>
                 + Pair
               </button>
             </div>
@@ -408,7 +452,10 @@ function PaymentTerminalsPanel({ onClose, embedded = false }: PaymentTerminalsPa
                       className={`catalog-list__item${
                         selectedId === reader.id ? " catalog-list__item--selected" : ""
                       }`}
-                      onClick={() => setSelectedId(reader.id)}
+                      onClick={() => {
+                        setSelectedId(reader.id);
+                        setPairingOpen(false);
+                      }}
                     >
                       <span className="catalog-list__item-name">
                         {reader.name}
@@ -427,19 +474,31 @@ function PaymentTerminalsPanel({ onClose, embedded = false }: PaymentTerminalsPa
             <div className="terminals-pair-hint">
               <p>
                 On the Solo: swipe down → <strong>Connections</strong> → <strong>API</strong> →{" "}
-                <strong>Connect</strong>. The device must be logged out of a merchant account.
+                <strong>Connect</strong>. Enter the Cloud API pairing code shown on the device.
+                The Solo must be logged out of a merchant account.
               </p>
             </div>
           </div>
 
           <div className="catalog-editor">
-            {selectedId === -1 ? (
+            {pairingOpen ? (
               <div className="settings-form">
                 <div className="settings-form__section">
                   <h3>Pair new terminal</h3>
                   <p className="settings-form__hint">
-                    Enter the pairing code shown on the Solo screen (expires in 5 minutes).
+                    On the Solo, open <strong>Connections → API → Connect</strong> and enter the
+                    Cloud API pairing code shown on the device screen (expires in about 5 minutes).
                   </p>
+                  {!config?.configured ? (
+                    <p className="permissions-panel__error">
+                      Configure SumUp API credentials in the backend environment before pairing.
+                    </p>
+                  ) : config.apiConnected === false ? (
+                    <p className="permissions-panel__error">
+                      {config.apiError ??
+                        "SumUp rejected the connection — fix SUMUP_API_KEY in .env and restart the backend."}
+                    </p>
+                  ) : null}
                   <label className="settings-field">
                     <span>Terminal name</span>
                     <input
@@ -450,23 +509,35 @@ function PaymentTerminalsPanel({ onClose, embedded = false }: PaymentTerminalsPa
                     />
                   </label>
                   <label className="settings-field">
-                    <span>Pairing code</span>
+                    <span>Cloud API pairing code</span>
                     <input
+                      ref={pairingCodeRef}
                       type="text"
                       value={pairingCode}
                       onChange={(e) => setPairingCode(e.target.value.toUpperCase())}
                       placeholder="e.g. 4WLFDSBF"
                       autoComplete="off"
                       spellCheck={false}
+                      inputMode="text"
                     />
                   </label>
-                  <button
-                    className="permissions-panel__save"
-                    onClick={() => void handlePair()}
-                    disabled={saving || !config?.configured}
-                  >
-                    {saving ? "Pairing…" : "Pair terminal"}
-                  </button>
+                  <div className="terminals-actions">
+                    <button
+                      className="permissions-panel__save"
+                      onClick={() => void handlePair()}
+                      disabled={saving || !config?.configured || config?.apiConnected === false}
+                    >
+                      {saving ? "Pairing…" : "Pair terminal"}
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-panel__logout"
+                      onClick={closePairing}
+                      disabled={saving}
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : selected ? (
@@ -561,7 +632,13 @@ function PaymentTerminalsPanel({ onClose, embedded = false }: PaymentTerminalsPa
                     <button
                       className="permissions-panel__save"
                       onClick={() => void handleTestPayment()}
-                      disabled={saving || paymentActive || !config?.configured || selected.remoteStatus !== "paired"}
+                      disabled={
+                        saving ||
+                        paymentActive ||
+                        !config?.checkoutConfigured ||
+                        config?.apiConnected === false ||
+                        selected.remoteStatus !== "paired"
+                      }
                     >
                       {paymentActive ? "Waiting for card…" : "Send test payment"}
                     </button>
@@ -603,7 +680,11 @@ function PaymentTerminalsPanel({ onClose, embedded = false }: PaymentTerminalsPa
               </div>
             ) : (
               <p className="catalog-editor__placeholder">
-                Select a terminal to view connectivity and send a test payment, or pair a new one.
+                Select a terminal to view connectivity and send a test payment, or click{" "}
+                <button type="button" className="wizard-link-btn" onClick={openPairing}>
+                  + Pair
+                </button>{" "}
+                to connect a Solo using its Cloud API code.
               </p>
             )}
           </div>

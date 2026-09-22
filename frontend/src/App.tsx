@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import Home from "./pages/Home";
 import LoginScreen from "./pages/LoginScreen";
 import SettingsPage from "./pages/SettingsPage";
@@ -13,7 +13,8 @@ import { useIdleLock } from "./auth/useIdleLock";
 import { useLockLandscape } from "./hooks/useLockLandscape";
 import { useBlockSwipeNavigation } from "./hooks/useBlockSwipeNavigation";
 import { usePushNotifications } from "./hooks/usePushNotifications";
-import PushEnableBanner from "./components/PushEnableBanner";
+import PushEnableWall from "./components/PushEnableWall";
+import { notificationsRequired } from "./lib/env";
 import { ConnectivityProvider } from "./connectivity/ConnectivityContext";
 import OfflineBanner from "./connectivity/OfflineBanner";
 
@@ -29,52 +30,36 @@ function AuthGate() {
   if (phase === "pin-setup") return <PinSetupScreen />;
   if (phase === "locked") return <PinLockScreen />;
 
+  const shell = (content: ReactNode) => (
+    <>
+      {notificationsRequired ? <PushEnableWall push={push} /> : null}
+      {content}
+    </>
+  );
+
   if (route === "settings") {
-    return (
-      <>
-        <PushEnableBanner push={push} />
-        <SettingsPage onBack={() => setRoute("home")} />
-      </>
-    );
+    return shell(<SettingsPage onBack={() => setRoute("home")} />);
   }
 
   if (route === "bookings") {
-    return (
-      <>
-        <PushEnableBanner push={push} />
-        <BookingsPage onBack={() => setRoute("home")} />
-      </>
-    );
+    return shell(<BookingsPage onBack={() => setRoute("home")} />);
   }
 
   if (route === "clients") {
-    return (
-      <>
-        <PushEnableBanner push={push} />
-        <ClientsPage onBack={() => setRoute("home")} />
-      </>
-    );
+    return shell(<ClientsPage onBack={() => setRoute("home")} />);
   }
 
   if (route === "calendar") {
-    return (
-      <>
-        <PushEnableBanner push={push} />
-        <CalendarPage onBack={() => setRoute("home")} />
-      </>
-    );
+    return shell(<CalendarPage onBack={() => setRoute("home")} />);
   }
 
-  return (
-    <>
-      <PushEnableBanner push={push} />
-      <Home
-        onOpenSettings={() => setRoute("settings")}
-        onOpenBookings={() => setRoute("bookings")}
-        onOpenClients={() => setRoute("clients")}
-        onOpenCalendar={() => setRoute("calendar")}
-      />
-    </>
+  return shell(
+    <Home
+      onOpenSettings={() => setRoute("settings")}
+      onOpenBookings={() => setRoute("bookings")}
+      onOpenClients={() => setRoute("clients")}
+      onOpenCalendar={() => setRoute("calendar")}
+    />
   );
 }
 

@@ -4,7 +4,10 @@ import { registerSW } from "virtual:pwa-register";
 import App from "./App";
 import "./styles/global.css";
 
-registerSW({ immediate: true });
+const isPortalRoute = /^\/portal\//.test(window.location.pathname);
+if (!isPortalRoute) {
+  registerSW({ immediate: true });
+}
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

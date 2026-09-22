@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { pool } from "../db";
 import { signAccessToken } from "./jwt";
 import { requireAuth } from "./middleware";
+import { logActivity } from "../activity/log";
 
 export const authRouter = Router();
 
@@ -57,17 +58,33 @@ authRouter.post("/login", async (req, res) => {
     return;
   }
 
+  const normalizedEmail = email.toLowerCase().trim();
   const { rows } = await pool.query<UserRow>("SELECT * FROM users WHERE email = $1", [
-    email.toLowerCase().trim(),
+    normalizedEmail,
   ]);
   const user = rows[0];
   if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+    await logActivity({
+      entityType: "user",
+      entityId: user?.id ?? null,
+      eventType: "login_failed",
+      description: `Failed login attempt for ${normalizedEmail}`,
+      metadata: { email: normalizedEmail },
+    });
     res.status(401).json({ error: "Invalid email or password" });
     return;
   }
 
   const refreshToken = await createRefreshToken(user.id);
   const accessToken = signAccessToken({ sub: user.id, isAdmin: user.is_admin });
+
+  await logActivity({
+    entityType: "user",
+    entityId: user.id,
+    eventType: "login",
+    actorUserId: user.id,
+    description: `${user.name} logged in`,
+  });
 
   res.json({ accessToken, refreshToken, user: toPublicUser(user) });
 });
@@ -89,9 +106,10 @@ authRouter.post("/refresh", async (req, res) => {
   res.json({ accessToken, user: toPublicUser(user) });
 });
 
+const isSixDigits = (value: unknown) => typeof value === "string" && /^\d{6}$/.test(value);
+
 authRouter.post("/pin/setup", requireAuth, async (req, res) => {
   const { pin, confirmPin } = req.body as { pin?: string; confirmPin?: string };
-  const isSixDigits = (value: unknown) => typeof value === "string" && /^\d{6}$/.test(value);
 
   if (!isSixDigits(pin) || !isSixDigits(confirmPin)) {
     res.status(400).json({ error: "PIN must be exactly 6 digits" });
@@ -105,6 +123,87 @@ authRouter.post("/pin/setup", requireAuth, async (req, res) => {
   const pinHash = await bcrypt.hash(pin!, 10);
   await pool.query("UPDATE users SET pin_hash = $1 WHERE id = $2", [pinHash, req.user!.id]);
 
+  await logActivity({
+    entityType: "user",
+    entityId: req.user!.id,
+    eventType: "pin_setup",
+    actorUserId: req.user!.id,
+    description: "Set up their unlock PIN",
+  });
+
+  res.json({ status: "ok" });
+});
+
+authRouter.post("/pin/change", requireAuth, async (req, res) => {
+  const { currentPin, newPin, confirmNewPin } = req.body as {
+    currentPin?: string;
+    newPin?: string;
+    confirmNewPin?: string;
+  };
+
+  if (!isSixDigits(currentPin) || !isSixDigits(newPin) || !isSixDigits(confirmNewPin)) {
+    res.status(400).json({ error: "PIN must be exactly 6 digits" });
+    return;
+  }
+  if (newPin !== confirmNewPin) {
+    res.status(400).json({ error: "New PIN and confirmation do not match" });
+    return;
+  }
+
+  const { rows } = await pool.query<UserRow>("SELECT * FROM users WHERE id = $1", [req.user!.id]);
+  const user = rows[0];
+  if (!user?.pin_hash || !(await bcrypt.compare(currentPin!, user.pin_hash))) {
+    res.status(401).json({ error: "Current PIN is incorrect" });
+    return;
+  }
+
+  const pinHash = await bcrypt.hash(newPin!, 10);
+  await pool.query("UPDATE users SET pin_hash = $1 WHERE id = $2", [pinHash, req.user!.id]);
+
+  await logActivity({
+    entityType: "user",
+    entityId: req.user!.id,
+    eventType: "pin_changed",
+    actorUserId: req.user!.id,
+    description: "Changed their unlock PIN",
+  });
+
+  res.json({ status: "ok" });
+});
+
+authRouter.post("/password/change", requireAuth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body as {
+    currentPassword?: string;
+    newPassword?: string;
+  };
+
+  if (!currentPassword || !newPassword) {
+    res.status(400).json({ error: "Current and new password are required" });
+    return;
+  }
+  if (newPassword.length < 8) {
+    res.status(400).json({ error: "New password must be at least 8 characters" });
+    return;
+  }
+
+  const { rows } = await pool.query<UserRow>("SELECT * FROM users WHERE id = $1", [req.user!.id]);
+  const user = rows[0];
+  if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) {
+    res.status(401).json({ error: "Current password is incorrect" });
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [passwordHash, req.user!.id]);
+
+  await logActivity({
+    entityType: "user",
+    entityId: req.user!.id,
+    eventType: "password_changed",
+    actorUserId: req.user!.id,
+    description: "Changed their password",
+  });
+
   res.json({ status: "ok" });
 });
 
@@ -117,18 +216,43 @@ authRouter.post("/pin/verify", async (req, res) => {
 
   const user = await getUserByRefreshToken(refreshToken);
   if (!user || !user.pin_hash || !(await bcrypt.compare(pin, user.pin_hash))) {
+    await logActivity({
+      entityType: "user",
+      entityId: user?.id ?? null,
+      eventType: "pin_verify_failed",
+      description: "Incorrect PIN entered to unlock",
+    });
     res.status(401).json({ error: "Incorrect PIN" });
     return;
   }
 
   const accessToken = signAccessToken({ sub: user.id, isAdmin: user.is_admin });
+
+  await logActivity({
+    entityType: "user",
+    entityId: user.id,
+    eventType: "unlocked",
+    actorUserId: user.id,
+    description: `${user.name} unlocked the app with their PIN`,
+  });
+
   res.json({ accessToken, user: toPublicUser(user) });
 });
 
 authRouter.post("/logout", async (req, res) => {
   const { refreshToken } = req.body as { refreshToken?: string };
   if (refreshToken) {
+    const user = await getUserByRefreshToken(refreshToken);
     await pool.query("DELETE FROM refresh_tokens WHERE token = $1", [refreshToken]);
+    if (user) {
+      await logActivity({
+        entityType: "user",
+        entityId: user.id,
+        eventType: "logout",
+        actorUserId: user.id,
+        description: `${user.name} logged out`,
+      });
+    }
   }
   res.json({ status: "ok" });
 });

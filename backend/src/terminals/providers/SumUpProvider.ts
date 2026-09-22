@@ -7,6 +7,7 @@ import type {
   TerminalReader,
   TerminalTransaction,
 } from "../TerminalProvider";
+import { TerminalProviderError } from "../errors";
 
 const SUMUP_API_BASE = "https://api.sumup.com";
 
@@ -38,12 +39,13 @@ function loadConfig() {
   const currency = (process.env.SUMUP_CURRENCY?.trim() || "GBP").toUpperCase();
 
   const missing: string[] = [];
+  const checkoutMissing: string[] = [];
   if (!apiKey) missing.push("SUMUP_API_KEY");
   if (!merchantCode) missing.push("SUMUP_MERCHANT_CODE");
-  if (!affiliateAppId) missing.push("SUMUP_AFFILIATE_APP_ID");
-  if (!affiliateKey) missing.push("SUMUP_AFFILIATE_KEY");
+  if (!affiliateAppId) checkoutMissing.push("SUMUP_AFFILIATE_APP_ID");
+  if (!affiliateKey) checkoutMissing.push("SUMUP_AFFILIATE_KEY");
 
-  return { apiKey, merchantCode, affiliateAppId, affiliateKey, currency, missing };
+  return { apiKey, merchantCode, affiliateAppId, affiliateKey, currency, missing, checkoutMissing };
 }
 
 function fromSumUpReader(reader: SumUpReader): TerminalReader {
@@ -67,6 +69,9 @@ function formatSumUpError(status: number, body: unknown): string {
     if (errors && typeof errors.detail === "string") return errors.detail;
     if (errors && typeof errors.type === "string") return errors.type;
   }
+  if (status === 401) {
+    return "SumUp rejected the API key — verify SUMUP_API_KEY in your backend .env";
+  }
   return `SumUp API error (${status})`;
 }
 
@@ -76,12 +81,14 @@ export class SumUpProvider implements TerminalProvider {
   }
 
   getConfigStatus(): TerminalConfigStatus {
-    const { merchantCode, currency, missing } = this.config;
+    const { merchantCode, currency, missing, checkoutMissing } = this.config;
     return {
       configured: missing.length === 0,
+      checkoutConfigured: missing.length === 0 && checkoutMissing.length === 0,
       merchantCode: merchantCode || null,
       currency,
       missing,
+      checkoutMissing,
     };
   }
 
@@ -93,31 +100,56 @@ export class SumUpProvider implements TerminalProvider {
     return config;
   }
 
+  private requireCheckoutConfig() {
+    const config = this.requireConfig();
+    if (config.checkoutMissing.length > 0) {
+      throw new Error(
+        `SumUp checkout is not configured. Missing: ${config.checkoutMissing.join(", ")}`
+      );
+    }
+    return config;
+  }
+
   private async request<T>(
     method: string,
     path: string,
     body?: unknown
   ): Promise<T> {
     const { apiKey } = this.requireConfig();
-    const res = await fetch(`${SUMUP_API_BASE}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${SUMUP_API_BASE}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    } catch (err) {
+      throw new TerminalProviderError(
+        err instanceof Error ? err.message : "Could not reach SumUp API",
+        502
+      );
+    }
 
     if (res.status === 204) {
       return undefined as T;
     }
 
     const text = await res.text();
-    const parsed = text ? (JSON.parse(text) as unknown) : null;
+    let parsed: unknown = null;
+    if (text) {
+      try {
+        parsed = JSON.parse(text) as unknown;
+      } catch {
+        parsed = { detail: text.slice(0, 200) };
+      }
+    }
 
     if (!res.ok) {
-      throw new Error(formatSumUpError(res.status, parsed));
+      throw new TerminalProviderError(formatSumUpError(res.status, parsed), res.status);
     }
 
     return parsed as T;
@@ -193,7 +225,7 @@ export class SumUpProvider implements TerminalProvider {
     amountMinorUnits: number,
     description?: string
   ): Promise<TerminalCheckoutResult> {
-    const { merchantCode, affiliateAppId, affiliateKey, currency } = this.requireConfig();
+    const { merchantCode, affiliateAppId, affiliateKey, currency } = this.requireCheckoutConfig();
     const foreignTransactionId = randomUUID();
 
     const data = await this.request<{

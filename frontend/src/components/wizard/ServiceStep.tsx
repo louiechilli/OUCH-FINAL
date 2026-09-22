@@ -43,10 +43,12 @@ function ServiceStep({ fetchWithAuth, selected, onSelect }: ServiceStepProps) {
                 <span className="wizard-option__title">{service.name}</span>
                 <span className="wizard-option__meta">
                   {service.useArtistDefaultRate
-                    ? "Artist hourly rate"
+                    ? "Priced per artist"
                     : service.defaultHourlyRate !== null && service.defaultHourlyRate > 0
-                      ? `From £${service.defaultHourlyRate}/hr`
-                      : "Free"}
+                      ? `£${service.defaultHourlyRate}/hr`
+                      : service.depositAmount > 0
+                        ? `£${service.depositAmount} deposit`
+                        : "Free"}
                 </span>
               </button>
             ))}

@@ -40,9 +40,13 @@ export interface TerminalTransaction {
 
 export interface TerminalConfigStatus {
   configured: boolean;
+  checkoutConfigured: boolean;
   merchantCode: string | null;
   currency: string;
   missing: string[];
+  checkoutMissing: string[];
+  apiConnected?: boolean | null;
+  apiError?: string | null;
 }
 
 export interface TerminalProvider {

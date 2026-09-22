@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { pool } from "../db";
 import { requireAdmin } from "../auth/middleware";
+import { logActivity } from "../activity/log";
 
 export const adminRouter = Router();
 
@@ -146,6 +147,15 @@ adminRouter.put("/permissions/users/:userId", async (req, res) => {
     client.release();
   }
 
+  await logActivity({
+    entityType: "permission",
+    entityId: userId,
+    eventType: "user_permissions_replaced",
+    actorUserId: req.user!.id,
+    description: `Permissions updated for user #${userId}`,
+    metadata: { permissionIds: uniqueIds },
+  });
+
   res.json({ status: "ok", permissionIds: uniqueIds });
 });
 
@@ -176,6 +186,13 @@ adminRouter.post("/permissions/groups", async (req, res) => {
        RETURNING id, name, slug, description, sort_order`,
       [name.trim(), normalizedSlug, description?.trim() || null, sortOrder ?? 0]
     );
+    await logActivity({
+      entityType: "permission",
+      entityId: rows[0].id,
+      eventType: "group_created",
+      actorUserId: req.user!.id,
+      description: `Permission group "${rows[0].name}" created`,
+    });
     res.status(201).json(toGroup(rows[0], []));
   } catch (err: unknown) {
     if (err && typeof err === "object" && "code" in err && err.code === "23505") {
@@ -223,6 +240,13 @@ adminRouter.post("/permissions", async (req, res) => {
       [groupId, normalizedKey, name.trim(), description?.trim() || null, sortOrder ?? 0]
     );
     const p = rows[0];
+    await logActivity({
+      entityType: "permission",
+      entityId: p.id,
+      eventType: "created",
+      actorUserId: req.user!.id,
+      description: `Permission "${p.name}" (${p.key}) created`,
+    });
     res.status(201).json({
       id: p.id,
       key: p.key,

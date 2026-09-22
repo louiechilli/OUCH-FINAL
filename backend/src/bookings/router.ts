@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { pool } from "../db";
 import { requireAuth } from "../auth/middleware";
-import { resolveRate } from "./pricing";
+import { computeBookingTotals, resolveRate } from "./pricing";
 import { removeBookingFromCalendar, syncBookingToCalendar } from "./calendarSync";
 import { logActivity, diffFields } from "../activity/log";
 import { listBookingPayments, recordBookingPayment } from "../payments/service";
@@ -334,21 +334,10 @@ bookingsRouter.post("/", async (req, res) => {
 
   const durationMinutes = Math.round((ends.getTime() - starts.getTime()) / 60000);
   const durationHours = durationMinutes / 60;
-  const subtotal = Math.round(rate.hourlyRate * durationHours * 100) / 100;
-
-  let depositAmount = rate.depositAmount;
-  let total = subtotal;
-  let bookingSubtotal = subtotal;
-
-  // Consults or fixed-fee services may have no hourly charge but still take a deposit.
-  if (total <= 0 && depositAmount > 0) {
-    total = depositAmount;
-    bookingSubtotal = depositAmount;
-  } else if (depositAmount > total) {
-    depositAmount = total;
-  }
-
-  const balanceDue = total;
+  const { subtotal: bookingSubtotal, depositAmount, total, balanceDue } = computeBookingTotals(
+    rate,
+    durationHours
+  );
 
   const { rows } = await pool.query(
     `INSERT INTO bookings (

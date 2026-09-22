@@ -7,6 +7,36 @@ export interface ResolvedRate {
   depositAmount: number;
 }
 
+export interface BookingTotals {
+  subtotal: number;
+  depositAmount: number;
+  total: number;
+  balanceDue: number;
+}
+
+/** Hourly subtotal plus deposit rules shared by booking create and the wizard UI. */
+export function computeBookingTotals(rate: ResolvedRate, durationHours: number): BookingTotals {
+  const hourlySubtotal = Math.round(rate.hourlyRate * durationHours * 100) / 100;
+  let depositAmount = rate.depositAmount;
+  let total = hourlySubtotal;
+  let subtotal = hourlySubtotal;
+
+  // Consultations and other fixed-fee services may have no hourly charge but still take a deposit.
+  if (total <= 0 && depositAmount > 0) {
+    total = depositAmount;
+    subtotal = depositAmount;
+  } else if (depositAmount > total) {
+    depositAmount = total;
+  }
+
+  return {
+    subtotal,
+    depositAmount,
+    total,
+    balanceDue: total,
+  };
+}
+
 interface ServiceRow {
   min_hours: string;
   max_hours: string | null;

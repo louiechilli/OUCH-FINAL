@@ -50,6 +50,11 @@ export function usePushNotifications(
   useEffect(() => {
     if (!supported || !fetchWithAuth || !enabled) return;
 
+    if (Notification.permission === "denied") {
+      setStatus("denied");
+      return;
+    }
+
     void syncExistingSubscription().catch(() => setStatus("error"));
   }, [supported, fetchWithAuth, enabled, syncExistingSubscription]);
 
@@ -90,5 +95,33 @@ export function usePushNotifications(
     }
   }, [supported, fetchWithAuth, enabled]);
 
-  return { status, subscribe };
+  const recheck = useCallback(async () => {
+    if (!supported || !fetchWithAuth || !enabled) return;
+
+    if (Notification.permission === "granted") {
+      setStatus("subscribing");
+      try {
+        await syncExistingSubscription();
+        const registration = await navigator.serviceWorker.ready;
+        const existing = await registration.pushManager.getSubscription();
+        if (existing) {
+          setStatus("subscribed");
+          return;
+        }
+        await subscribe();
+      } catch {
+        setStatus("error");
+      }
+      return;
+    }
+
+    if (Notification.permission === "default") {
+      await subscribe();
+      return;
+    }
+
+    setStatus("denied");
+  }, [supported, fetchWithAuth, enabled, syncExistingSubscription, subscribe]);
+
+  return { status, subscribe, recheck };
 }

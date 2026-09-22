@@ -3,9 +3,15 @@ import { STUDIO_TIMEZONE, studioDateKey } from "./timezone";
 export { studioDateKey };
 export type CalendarView = "day" | "week" | "month";
 
-export const CALENDAR_GRID_START_HOUR = 6;
-export const CALENDAR_GRID_END_HOUR = 21;
+export const CALENDAR_GRID_START_HOUR = 0;
+export const CALENDAR_GRID_END_HOUR = 24;
 export const CALENDAR_HOUR_HEIGHT = 52;
+export const CALENDAR_HOUR_HEIGHT_MIN = 32;
+export const CALENDAR_HOUR_HEIGHT_MAX = 104;
+
+export function clampCalendarHourHeight(hourHeight: number) {
+  return Math.min(CALENDAR_HOUR_HEIGHT_MAX, Math.max(CALENDAR_HOUR_HEIGHT_MIN, hourHeight));
+}
 
 const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -22,6 +28,61 @@ const ARTIST_COLORS = [
 
 export function artistCalendarColor(artistId: number) {
   return ARTIST_COLORS[Math.abs(artistId) % ARTIST_COLORS.length];
+}
+
+const MUTED_ARTIST_OPACITY = 0.15;
+
+function parseHexColor(hex: string) {
+  const normalized = hex.replace("#", "");
+  return {
+    r: Number.parseInt(normalized.slice(0, 2), 16),
+    g: Number.parseInt(normalized.slice(2, 4), 16),
+    b: Number.parseInt(normalized.slice(4, 6), 16),
+  };
+}
+
+export function artistCalendarFaded(artistColorHex: string, opacity = MUTED_ARTIST_OPACITY) {
+  const { r, g, b } = parseHexColor(artistColorHex);
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+}
+
+export function isMutedCalendarBooking(status: string) {
+  return status === "done" || status === "cancelled" || status === "completed";
+}
+
+export function calendarEventStyle(
+  artistId: number,
+  muted: boolean,
+  layout?: { top?: number; height?: number }
+): Record<string, string | number> {
+  const color = artistCalendarColor(artistId);
+  const style: Record<string, string | number> = { ...layout };
+
+  if (muted) {
+    style.backgroundColor = artistCalendarFaded(color.bg);
+    style.color = "#5f6368";
+    style.boxShadow = `inset 3px 0 0 ${artistCalendarFaded(color.bg, 0.45)}`;
+    return style;
+  }
+
+  style.backgroundColor = color.bg;
+  style.color = color.text;
+  return style;
+}
+
+export function calendarChipStyle(artistId: number, muted: boolean) {
+  const color = artistCalendarColor(artistId);
+  if (muted) {
+    return {
+      backgroundColor: artistCalendarFaded(color.bg),
+      color: "#5f6368",
+      boxShadow: `inset 2px 0 0 ${artistCalendarFaded(color.bg, 0.45)}`,
+    };
+  }
+  return {
+    backgroundColor: color.bg,
+    color: color.text,
+  };
 }
 
 export function studioMinutesSinceMidnight(date: Date) {
@@ -189,7 +250,8 @@ export function eventSegmentForDay(
   endsAt: string,
   dayKey: string,
   gridStartHour = CALENDAR_GRID_START_HOUR,
-  gridEndHour = CALENDAR_GRID_END_HOUR
+  gridEndHour = CALENDAR_GRID_END_HOUR,
+  hourHeight = CALENDAR_HOUR_HEIGHT
 ) {
   const start = new Date(startsAt);
   const end = new Date(endsAt);
@@ -207,19 +269,23 @@ export function eventSegmentForDay(
   const visibleEnd = Math.min(clipEnd, gridEnd);
   if (visibleEnd <= visibleStart) return null;
 
-  const top = ((visibleStart - gridStart) / 60) * CALENDAR_HOUR_HEIGHT;
-  const height = Math.max(((visibleEnd - visibleStart) / 60) * CALENDAR_HOUR_HEIGHT, 22);
+  const top = ((visibleStart - gridStart) / 60) * hourHeight;
+  const height = Math.max(((visibleEnd - visibleStart) / 60) * hourHeight, 22);
   return { top, height };
 }
 
-export function currentTimeIndicator(now: Date, dayKey: string) {
+export function currentTimeIndicator(
+  now: Date,
+  dayKey: string,
+  hourHeight = CALENDAR_HOUR_HEIGHT
+) {
   const todayKey = studioDateKey(now);
   if (dayKey !== todayKey) return null;
   const minutes = studioMinutesSinceMidnight(now);
   const gridStart = CALENDAR_GRID_START_HOUR * 60;
   const gridEnd = CALENDAR_GRID_END_HOUR * 60;
   if (minutes < gridStart || minutes > gridEnd) return null;
-  return ((minutes - gridStart) / 60) * CALENDAR_HOUR_HEIGHT;
+  return ((minutes - gridStart) / 60) * hourHeight;
 }
 
 export function shiftAnchor(view: CalendarView, anchor: Date, direction: -1 | 1) {
@@ -228,4 +294,65 @@ export function shiftAnchor(view: CalendarView, anchor: Date, direction: -1 | 1)
   if (view === "week") return parseDateKey(addDaysToDateKey(key, direction * 7));
   const [year, month] = key.split("-").map(Number);
   return new Date(Date.UTC(year, month - 1 + direction, 1, 12, 0, 0));
+}
+
+export function shiftAnchorBy(view: CalendarView, anchor: Date, offset: number) {
+  if (offset === 0) return anchor;
+  let next = anchor;
+  const step = offset > 0 ? 1 : -1;
+  for (let index = 0; index < Math.abs(offset); index += 1) {
+    next = shiftAnchor(view, next, step);
+  }
+  return next;
+}
+
+export const CALENDAR_BUFFER_RADIUS = 2;
+
+export function calendarPeriodKey(view: CalendarView, anchor: Date) {
+  if (view === "month") return studioDateKey(anchor).slice(0, 7);
+  if (view === "week") return startOfWeekDateKey(anchor);
+  return studioDateKey(anchor);
+}
+
+type CalendarTimedItem = { starts_at: string; ends_at: string };
+
+export function calendarScrollTargetTop(
+  bookings: CalendarTimedItem[],
+  blocks: CalendarTimedItem[],
+  dayKeys: string[],
+  now?: Date,
+  hourHeight = CALENDAR_HOUR_HEIGHT
+) {
+  const midpoints: number[] = [];
+
+  const collect = (startsAt: string, endsAt: string) => {
+    for (const dayKey of dayKeys) {
+      const segment = eventSegmentForDay(startsAt, endsAt, dayKey, CALENDAR_GRID_START_HOUR, CALENDAR_GRID_END_HOUR, hourHeight);
+      if (segment) midpoints.push(segment.top + segment.height / 2);
+    }
+  };
+
+  for (const booking of bookings) collect(booking.starts_at, booking.ends_at);
+  for (const block of blocks) collect(block.starts_at, block.ends_at);
+
+  if (midpoints.length > 0) {
+    midpoints.sort((a, b) => a - b);
+    return midpoints[Math.floor(midpoints.length / 2)];
+  }
+
+  if (now) {
+    const todayKey = studioDateKey(now);
+    if (dayKeys.includes(todayKey)) {
+      const indicator = currentTimeIndicator(now, todayKey, hourHeight);
+      if (indicator !== null) return indicator;
+    }
+  }
+
+  return 10 * hourHeight;
+}
+
+export function scrollCalendarToTarget(container: HTMLElement, targetTop: number) {
+  const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+  const centered = targetTop - container.clientHeight / 2;
+  container.scrollTop = Math.max(0, Math.min(centered, maxScroll));
 }

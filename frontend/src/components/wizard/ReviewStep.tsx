@@ -1,4 +1,5 @@
 import type { BookingDraft } from "../../pages/NewBookingWizard";
+import { computeBookingTotals } from "../../lib/bookingPricing";
 import { STUDIO_TIMEZONE } from "../../lib/timezone";
 
 interface ReviewStepProps {
@@ -22,7 +23,7 @@ function formatDateTime(iso: string) {
 
 function ReviewStep({ draft, submitting, error, onNotesChange, onConfirm }: ReviewStepProps) {
   const { service, client, artist, hours, rate, slot } = draft;
-  const total = rate && hours ? rate.hourlyRate * hours : 0;
+  const totals = rate && hours ? computeBookingTotals(rate, hours) : null;
 
   return (
     <div className="wizard-step">
@@ -49,14 +50,20 @@ function ReviewStep({ draft, submitting, error, onNotesChange, onConfirm }: Revi
             {hours} hr{hours !== 1 ? "s" : ""}
           </span>
         </div>
+        {rate && rate.hourlyRate > 0 && (
+          <div className="wizard-review-row">
+            <span>Rate</span>
+            <span>£{rate.hourlyRate.toFixed(2)}/hr</span>
+          </div>
+        )}
         <div className="wizard-review-row wizard-review-row--total">
           <span>Total</span>
-          <span>{total > 0 ? `£${total.toFixed(2)}` : "Free"}</span>
+          <span>{totals && totals.total > 0 ? `£${totals.total.toFixed(2)}` : "Free"}</span>
         </div>
-        {rate && rate.depositAmount > 0 && (
+        {totals && totals.depositAmount > 0 && (
           <div className="wizard-review-row">
             <span>Deposit due</span>
-            <span>£{rate.depositAmount.toFixed(2)}</span>
+            <span>£{totals.depositAmount.toFixed(2)}</span>
           </div>
         )}
       </div>
@@ -76,7 +83,7 @@ function ReviewStep({ draft, submitting, error, onNotesChange, onConfirm }: Revi
       <button className="wizard-primary-btn wizard-primary-btn--full" disabled={submitting} onClick={onConfirm}>
         {submitting
           ? "Booking…"
-          : rate && rate.depositAmount > 0
+          : totals && totals.depositAmount > 0
             ? "Confirm booking & collect deposit"
             : "Confirm booking"}
       </button>

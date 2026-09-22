@@ -3,6 +3,7 @@ import { pool } from "../db";
 import { requireAuth, requireAdmin } from "../auth/middleware";
 import { reconcileArtistCalendar } from "./sync";
 import { startWatchForArtist, stopWatchForArtist } from "./watch";
+import { logActivity } from "../activity/log";
 
 export const calendarRouter = Router();
 
@@ -47,6 +48,13 @@ calendarRouter.post("/artists/:artistId/watch", requireAuth, requireAdmin, async
   const artistId = Number(req.params.artistId);
   try {
     const channel = await startWatchForArtist(artistId);
+    await logActivity({
+      entityType: "calendar_watch",
+      entityId: artistId,
+      eventType: "started",
+      actorUserId: req.user!.id,
+      description: `Google Calendar watch started for artist ${artistId}`,
+    });
     res.json({ status: "watching", channel });
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
@@ -56,6 +64,13 @@ calendarRouter.post("/artists/:artistId/watch", requireAuth, requireAdmin, async
 calendarRouter.delete("/artists/:artistId/watch", requireAuth, requireAdmin, async (req, res) => {
   const artistId = Number(req.params.artistId);
   await stopWatchForArtist(artistId);
+  await logActivity({
+    entityType: "calendar_watch",
+    entityId: artistId,
+    eventType: "stopped",
+    actorUserId: req.user!.id,
+    description: `Google Calendar watch stopped for artist ${artistId}`,
+  });
   res.json({ status: "stopped" });
 });
 

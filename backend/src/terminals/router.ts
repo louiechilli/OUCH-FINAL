@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAdmin } from "../auth/middleware";
 import { logActivity } from "../activity/log";
 import { getTerminalProvider } from "./index";
+import { TerminalProviderError, mapTerminalErrorToHttpStatus } from "./errors";
 import {
   deleteStoredTerminal,
   listStoredTerminals,
@@ -13,19 +14,47 @@ export const terminalsRouter = Router();
 
 terminalsRouter.use(requireAdmin);
 
-function handleProviderError(res: import("express").Response, err: unknown) {
+function handleProviderError(res: import("express").Response, err: unknown, context?: string) {
+  if (context) {
+    console.error(context, err);
+  }
+
+  if (err instanceof TerminalProviderError) {
+    res.status(mapTerminalErrorToHttpStatus(err.statusCode)).json({ error: err.message });
+    return;
+  }
+
   const message = err instanceof Error ? err.message : "Terminal provider error";
   if (message.includes("not configured")) {
     res.status(503).json({ error: message });
     return;
   }
+
   res.status(502).json({ error: message });
 }
 
 /** SumUp credentials status (no secrets exposed). */
-terminalsRouter.get("/config", (_req, res) => {
+terminalsRouter.get("/config", async (_req, res) => {
   const provider = getTerminalProvider();
-  res.json(provider.getConfigStatus());
+  const status = provider.getConfigStatus();
+
+  if (!status.configured) {
+    res.json({ ...status, apiConnected: null, apiError: null });
+    return;
+  }
+
+  try {
+    await provider.listReaders();
+    res.json({ ...status, apiConnected: true, apiError: null });
+  } catch (err) {
+    const message =
+      err instanceof TerminalProviderError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : "Could not reach SumUp";
+    res.json({ ...status, apiConnected: false, apiError: message });
+  }
 });
 
 /** List locally stored terminals enriched with live SumUp reader data. */
@@ -95,7 +124,7 @@ terminalsRouter.post("/readers", async (req, res) => {
 
     res.status(201).json({ reader, stored });
   } catch (err) {
-    handleProviderError(res, err);
+    handleProviderError(res, err, "Failed to pair SumUp reader");
   }
 });
 
